@@ -1,0 +1,19 @@
+# Configuracao do Apache (XAMPP / WAMP / hospedagem).
+# Manda todas as URLs para o index.php, exceto arquivos e pastas que existem
+# de verdade (css, imagens, javascripts).
+
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Se voce instalou em uma subpasta, ajuste aqui. Ex.: RewriteBase /framework/
+    # RewriteBase /
+
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ index.php?url=$1 [QSA,L]
+</IfModule>
+
+# As pastas internas (nucleo, modelos, controllers, configuracoes, testes,
+# banco) tem cada uma o seu proprio .htaccess bloqueando acesso direto.

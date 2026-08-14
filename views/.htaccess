@@ -1,0 +1,11 @@
+# A pasta views serve arquivos estaticos (css, imagens, javascripts),
+# mas os arquivos .php das telas nao podem ser abertos diretamente.
+<FilesMatch "\.php$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

@@ -1,0 +1,15 @@
+# Banco de dados SQLite gerado pelo instalar.php
+banco/dados.sqlite
+banco/*.sqlite-journal
+banco/*.sqlite-wal
+banco/*.sqlite-shm
+
+# Configuracoes locais de cada aluno (senha do MySQL, etc.)
+configuracoes/banco.local.php
+
+# Sistema operacional / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

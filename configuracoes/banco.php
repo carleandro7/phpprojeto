@@ -3,18 +3,21 @@
 /**
  * Configuracoes do banco de dados.
  *
- * Vem configurado com SQLite: nao precisa instalar nem configurar servidor,
- * o banco e um unico arquivo em banco/dados.sqlite.
+ * Vem configurado com MySQL (XAMPP). Para instalar:
+ *   1. Inicie o MySQL no painel de controle do XAMPP
+ *   2. Rode:  php instalar.php
  *
- * Para usar MySQL (XAMPP / phpMyAdmin):
- *   1. Crie o banco no phpMyAdmin (ex.: framework_aula)
- *   2. Importe o arquivo banco/esquema.mysql.sql
- *   3. Troque 'driver' para 'mysql' e ajuste usuario/senha abaixo
+ * O instalador cria o banco, as tabelas e os dados de exemplo sozinho,
+ * nao precisa criar nada na mao pelo phpMyAdmin.
+ *
+ * Para voltar ao SQLite (nao precisa de servidor nenhum, o banco e um unico
+ * arquivo em banco/dados.sqlite): troque 'driver' para 'sqlite' e rode o
+ * instalador de novo.
  */
 
 return [
     // 'sqlite' ou 'mysql'
-    'driver' => 'sqlite',
+    'driver' => 'mysql',
 
     'sqlite' => [
         'arquivo' => CAMINHO_RAIZ . '/banco/dados.sqlite',

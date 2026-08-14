@@ -7,31 +7,37 @@ ou `Nucleo\Model`, e já tem rota, banco de dados, validação, template e teste
 funcionando — sem instalar nada e sem configurar nada.
 
 ```
-Requisitos: apenas PHP 8.1 ou superior (com PDO SQLite, que já vem ativado).
-Nenhuma dependência externa. Nenhum Composer. Nenhum banco para instalar.
+Requisitos: PHP 8.1 ou superior e MySQL/MariaDB (ambos já vêm no XAMPP).
+Nenhuma dependência externa. Nenhum Composer.
 ```
+
+O projeto vem configurado para **MySQL**. O instalador cria o banco sozinho —
+não é preciso mexer no phpMyAdmin.
 
 ---
 
 ## 1. Como colocar para rodar
 
-### Opção A — servidor embutido do PHP (mais rápido, recomendado)
+### Opção A — XAMPP (recomendado)
+
+1. Copie a pasta do projeto para dentro de `htdocs`.
+2. No painel do XAMPP, inicie o **Apache** e o **MySQL**.
+3. Acesse `http://localhost/phpprojeto/instalar.php` uma vez.
+4. Acesse `http://localhost/phpprojeto`.
+
+> O `.htaccess` já está configurado. Se as rotas derem 404, ative o
+> `mod_rewrite` no Apache e confira se `AllowOverride All` está ligado.
+
+### Opção B — servidor embutido do PHP
+
+Com o MySQL do XAMPP iniciado:
 
 ```bash
-php instalar.php                       # cria o banco e os dados de exemplo
+php instalar.php                       # cria o banco, as tabelas e os dados
 php -S localhost:8000 roteador.php     # liga o servidor
 ```
 
 Abra <http://localhost:8000>.
-
-### Opção B — XAMPP / WAMP
-
-1. Copie a pasta do projeto para dentro de `htdocs`.
-2. Acesse `http://localhost/framework/instalar.php` uma vez.
-3. Acesse `http://localhost/framework`.
-
-> O `.htaccess` já está configurado. Se as rotas derem 404, ative o
-> `mod_rewrite` no Apache e confira se `AllowOverride All` está ligado.
 
 ### Rodar os testes
 
@@ -95,10 +101,10 @@ framework/
 │   └── exemplos/            modelo comentado para o aluno copiar
 │
 └── banco/                 BANCO DE DADOS
-    ├── esquema.sqlite.sql   estrutura para SQLite
-    ├── esquema.mysql.sql    estrutura para MySQL (XAMPP)
-    ├── dados_exemplo.sql    registros iniciais
-    └── dados.sqlite         o banco em si (criado pelo instalar.php)
+    ├── esquema.mysql.sql    estrutura para MySQL (o padrão do projeto)
+    ├── esquema.sqlite.sql   estrutura para SQLite (driver alternativo)
+    ├── dados_exemplo.sql    registros iniciais (serve para os dois)
+    └── dados.sqlite         arquivo usado só no driver sqlite
 ```
 
 ---
@@ -143,15 +149,19 @@ protegidos, então use-os para o código de apoio do controlador.
 
 ### Passo 1 — a tabela
 
-Adicione em `banco/esquema.sqlite.sql` (e no `.mysql.sql`, se for usar MySQL):
+Adicione em `banco/esquema.mysql.sql`:
 
 ```sql
 CREATE TABLE professores (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    nome       TEXT NOT NULL,
-    disciplina TEXT NOT NULL
-);
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    nome       VARCHAR(100) NOT NULL,
+    disciplina VARCHAR(60)  NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
+
+> Se também for usar o SQLite, repita a tabela em `banco/esquema.sqlite.sql`
+> com a sintaxe dele: `id INTEGER PRIMARY KEY AUTOINCREMENT`, `TEXT` no lugar
+> de `VARCHAR` e sem o `ENGINE`.
 
 Depois rode `php instalar.php` de novo.
 
@@ -462,14 +472,33 @@ php testes/executar.php validacao          # qualquer teste com "validacao" no n
 
 ---
 
-## 9. Usando MySQL em vez de SQLite
+## 9. O banco de dados
 
-1. No phpMyAdmin: `CREATE DATABASE framework_aula;`
-2. Importe `banco/esquema.mysql.sql`.
-3. Em `configuracoes/banco.php`, troque `'driver' => 'mysql'` e ajuste
-   usuário e senha.
+O sistema já vem no **MySQL**, configurado em `configuracoes/banco.php`:
 
-Nada mais muda: os modelos e controladores continuam iguais.
+| Item    | Valor padrão (XAMPP) |
+|---------|----------------------|
+| host    | `localhost:3306`     |
+| banco   | `framework_aula`     |
+| usuário | `root`               |
+| senha   | *(vazia)*            |
+
+`php instalar.php` faz tudo sozinho:
+
+1. cria o banco `framework_aula` se ele ainda não existir;
+2. executa `banco/esquema.mysql.sql` (tabelas);
+3. executa `banco/dados_exemplo.sql` (8 alunos de exemplo).
+
+Pode rodar quantas vezes quiser — a tabela é recriada do zero.
+Para ver os dados no phpMyAdmin: <http://localhost/phpmyadmin>.
+
+### Voltar para o SQLite
+
+Em `configuracoes/banco.php` troque `'driver' => 'sqlite'` e rode
+`php instalar.php` de novo. O banco vira um único arquivo em
+`banco/dados.sqlite`, sem precisar de servidor.
+
+Nada mais muda: os modelos e controladores continuam iguais nos dois casos.
 
 ---
 
@@ -496,6 +525,8 @@ Nada mais muda: os modelos e controladores continuam iguais.
 | "Controlador não encontrado"              | nome da classe precisa terminar em `Controller` e casar com o arquivo |
 | "Método não acessível"                    | o método precisa ser `public`                                         |
 | "View não encontrada"                     | confira o caminho: `alunos/index` → `views/alunos/index.php`          |
-| "Não foi possível conectar ao banco"      | rode `php instalar.php`                                               |
+| "Não foi possível conectar ao banco"      | inicie o **MySQL** no painel do XAMPP e rode `php instalar.php`       |
+| "Base table or view not found"            | rode `php instalar.php` para criar as tabelas                         |
+| "Access denied for user 'root'"           | ajuste usuário/senha em `configuracoes/banco.php`                     |
 | Erro de coluna inválida                   | é a proteção contra SQL Injection: nome de coluna só com letras/`_`   |
 | Página em branco                          | veja o terminal; com `debug => true` o erro aparece na tela           |

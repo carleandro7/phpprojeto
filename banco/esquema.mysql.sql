@@ -1,9 +1,15 @@
 -- Estrutura das tabelas para MySQL / MariaDB (XAMPP).
 --
--- Como usar:
---   1. No phpMyAdmin, crie o banco:  CREATE DATABASE framework_aula;
+-- Normalmente voce NAO precisa executar este arquivo na mao:
+-- "php instalar.php" cria o banco, roda este esquema e insere os dados
+-- de exemplo (banco/dados_exemplo.sql) automaticamente.
+--
+-- Se quiser importar pelo phpMyAdmin mesmo assim:
+--   1. Crie o banco:  CREATE DATABASE framework_aula CHARACTER SET utf8mb4;
 --   2. Selecione o banco e importe este arquivo.
---   3. Em configuracoes/banco.php troque 'driver' para 'mysql'.
+--   3. Depois importe banco/dados_exemplo.sql para ter os registros.
+--
+-- Atencao: o DROP TABLE abaixo apaga a tabela e todos os seus dados.
 
 DROP TABLE IF EXISTS alunos;
 

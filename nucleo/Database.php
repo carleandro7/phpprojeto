@@ -97,6 +97,50 @@ class Database
     }
 
     /**
+     * Cria o banco de dados no MySQL caso ele ainda nao exista.
+     *
+     * No SQLite isso nao e preciso: o arquivo nasce junto com a conexao.
+     * No MySQL, sem isso, seria obrigatorio abrir o phpMyAdmin e criar o
+     * banco na mao antes de rodar o instalador.
+     *
+     * Conectamos ao servidor SEM escolher um banco (o DSN nao leva dbname),
+     * criamos o banco e so entao a conexao normal consegue se conectar.
+     *
+     * @return bool true se chegou a mexer no servidor (driver mysql)
+     */
+    public static function criarBancoSeNaoExistir(): bool
+    {
+        if (Config::obter('banco.driver', 'sqlite') !== 'mysql') {
+            return false;
+        }
+
+        $c = Config::obter('banco.mysql');
+
+        // O nome do banco nao pode ser parametro do PDO (e identificador,
+        // nao valor), entao passa pela validacao da classe Sql.
+        $nome    = Sql::identificador($c['banco'], 'banco de dados');
+        $charset = Sql::identificador($c['charset'], 'charset');
+
+        $dsn = sprintf('mysql:host=%s;port=%d;charset=%s', $c['host'], $c['porta'], $charset);
+
+        try {
+            $servidor = new PDO($dsn, $c['usuario'], $c['senha'], [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            ]);
+
+            $servidor->exec("CREATE DATABASE IF NOT EXISTS `{$nome}` CHARACTER SET {$charset}");
+        } catch (PDOException $e) {
+            throw new RuntimeException(
+                "Nao foi possivel criar o banco \"{$nome}\": " . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+
+        return true;
+    }
+
+    /**
      * Cria as tabelas lendo o arquivo de esquema correspondente ao driver.
      * Ex.: banco/esquema.sqlite.sql
      */

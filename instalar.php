@@ -35,6 +35,14 @@ try {
         $escrever('Arquivo: ' . Config::obter('banco.sqlite.arquivo'));
     }
 
+    if ($driver === 'mysql') {
+        $escrever('Servidor: ' . Config::obter('banco.mysql.host')
+            . ' | Banco: ' . Config::obter('banco.mysql.banco'));
+
+        Database::criarBancoSeNaoExistir();
+        $escrever('[ok] Banco de dados pronto.');
+    }
+
     Database::migrar();
     $escrever('[ok] Tabelas criadas.');
 
@@ -55,9 +63,13 @@ try {
 } catch (Throwable $e) {
     $escrever('[ERRO] ' . $e->getMessage());
 
-    if ($driver ?? '' === 'mysql') {
-        $escrever('Verifique se o banco existe e se usuario/senha estao corretos');
-        $escrever('em configuracoes/banco.php.');
+    // Atencao aos parenteses: sem eles o PHP leria "$driver ?? ('' === 'mysql')".
+    if (($driver ?? '') === 'mysql') {
+        $escrever('');
+        $escrever('Checklist do MySQL:');
+        $escrever('  1. O MySQL esta iniciado no painel do XAMPP?');
+        $escrever('  2. Usuario e senha em configuracoes/banco.php estao corretos?');
+        $escrever('     (no XAMPP o padrao e usuario "root" e senha vazia)');
     }
 
     if (!$noTerminal) {

@@ -14,6 +14,11 @@ Nenhuma dependência externa. Nenhum Composer.
 O projeto vem configurado para **MySQL**. O instalador cria o banco sozinho —
 não é preciso mexer no phpMyAdmin.
 
+> 📄 **Material para a turma:** [`documentacao/Guia-do-Aluno.pdf`](documentacao/Guia-do-Aluno.pdf)
+> — 42 páginas explicando cada parte do sistema, como adicionar tabelas,
+> modelos, controladores e views, e o que dá para configurar.
+> Para regerar depois de editar o HTML: `python documentacao/gerar-pdf.py`.
+
 ---
 
 ## 1. Como colocar para rodar
@@ -28,21 +33,36 @@ não é preciso mexer no phpMyAdmin.
 > O `.htaccess` já está configurado. Se as rotas derem 404, ative o
 > `mod_rewrite` no Apache e confira se `AllowOverride All` está ligado.
 
+### Comandos no terminal: use o caminho completo do PHP
+
+O XAMPP **não** registra o PHP no Windows. Digitar só `php` resulta em
+`O termo 'php' nao e reconhecido...` — por isso todos os comandos abaixo usam
+`C:\xampp\php\php.exe`.
+
+Abra o PowerShell **dentro da pasta do projeto** (botão direito na pasta →
+*Abrir no Terminal*).
+
+Para criar um apelido e digitar menos — vale só na janela atual:
+
+```powershell
+Set-Alias php C:\xampp\php\php.exe
+```
+
 ### Opção B — servidor embutido do PHP
 
 Com o MySQL do XAMPP iniciado:
 
-```bash
-php instalar.php                       # cria o banco, as tabelas e os dados
-php -S localhost:8000 roteador.php     # liga o servidor
+```powershell
+C:\xampp\php\php.exe instalar.php                    # cria o banco e os dados
+C:\xampp\php\php.exe -S localhost:8000 roteador.php  # liga o servidor
 ```
 
 Abra <http://localhost:8000>.
 
 ### Rodar os testes
 
-```bash
-php testes/executar.php
+```powershell
+C:\xampp\php\php.exe testes/executar.php
 ```
 
 ---
@@ -92,7 +112,7 @@ framework/
 │   └── erros/               404 e 500
 │
 ├── testes/                TESTES
-│   ├── executar.php         roda tudo:  php testes/executar.php
+│   ├── executar.php         roda todos os testes de uma vez
 │   ├── bootstrap.php        usa um banco descartável, em memória
 │   ├── suporte/             o motor de testes (TesteBase, Executor...)
 │   ├── modelos/             testes dos modelos
@@ -163,7 +183,7 @@ CREATE TABLE professores (
 > com a sintaxe dele: `id INTEGER PRIMARY KEY AUTOINCREMENT`, `TEXT` no lugar
 > de `VARCHAR` e sem o `ENGINE`.
 
-Depois rode `php instalar.php` de novo.
+Depois rode o `instalar.php` de novo.
 
 ### Passo 2 — o modelo
 
@@ -355,7 +375,7 @@ Para buscas com `LIKE`, use `Sql::comoLike($termo)` — ele neutraliza os
 curingas `%` e `_` que o usuário possa digitar.
 
 Os ataques estão demonstrados em `testes/nucleo/SegurancaSqlTest.php`: rode
-`php testes/executar.php SegurancaSql` para ver o framework resistindo a
+`C:\xampp\php\php.exe testes/executar.php SegurancaSql` para ver o framework resistindo a
 `DROP TABLE`, `OR 1=1`, `--` e injeção por nome de coluna.
 
 ### XSS
@@ -385,7 +405,7 @@ Estrutura:
 
 ```
 testes/
-├── executar.php       php testes/executar.php
+├── executar.php       roda os testes
 ├── suporte/           o motor (TesteBase, Executor, Resposta)
 ├── exemplos/          ExemploTest.php — todas as verificações comentadas
 ├── modelos/           AlunoTest.php
@@ -459,7 +479,8 @@ Ajudantes de banco: `limparTabela()`, `contarNaTabela()`, `limparSessao()`.
 
 ### Rodando parte dos testes
 
-```bash
+```powershell
+# Abreviado com Set-Alias php C:\xampp\php\php.exe (veja a secao 1)
 php testes/executar.php                    # tudo
 php testes/executar.php Modelos            # só a pasta modelos
 php testes/executar.php Controllers        # só a pasta controllers
@@ -483,7 +504,7 @@ O sistema já vem no **MySQL**, configurado em `configuracoes/banco.php`:
 | usuário | `root`               |
 | senha   | *(vazia)*            |
 
-`php instalar.php` faz tudo sozinho:
+O `instalar.php` faz tudo sozinho:
 
 1. cria o banco `framework_aula` se ele ainda não existir;
 2. executa `banco/esquema.mysql.sql` (tabelas);
@@ -495,7 +516,7 @@ Para ver os dados no phpMyAdmin: <http://localhost/phpmyadmin>.
 ### Voltar para o SQLite
 
 Em `configuracoes/banco.php` troque `'driver' => 'sqlite'` e rode
-`php instalar.php` de novo. O banco vira um único arquivo em
+o `instalar.php` de novo. O banco vira um único arquivo em
 `banco/dados.sqlite`, sem precisar de servidor.
 
 Nada mais muda: os modelos e controladores continuam iguais nos dois casos.
@@ -525,8 +546,10 @@ Nada mais muda: os modelos e controladores continuam iguais nos dois casos.
 | "Controlador não encontrado"              | nome da classe precisa terminar em `Controller` e casar com o arquivo |
 | "Método não acessível"                    | o método precisa ser `public`                                         |
 | "View não encontrada"                     | confira o caminho: `alunos/index` → `views/alunos/index.php`          |
-| "Não foi possível conectar ao banco"      | inicie o **MySQL** no painel do XAMPP e rode `php instalar.php`       |
-| "Base table or view not found"            | rode `php instalar.php` para criar as tabelas                         |
+| "O termo 'php' não é reconhecido"         | use o caminho completo: `C:\xampp\php\php.exe testes/executar.php`     |
+| "Could not open input file"               | o terminal está em outra pasta; entre em `htdocs/phpprojeto` primeiro |
+| "Não foi possível conectar ao banco"      | inicie o **MySQL** no painel do XAMPP e rode o `instalar.php`         |
+| "Base table or view not found"            | rode o `instalar.php` para criar as tabelas                           |
 | "Access denied for user 'root'"           | ajuste usuário/senha em `configuracoes/banco.php`                     |
 | Erro de coluna inválida                   | é a proteção contra SQL Injection: nome de coluna só com letras/`_`   |
 | Página em branco                          | veja o terminal; com `debug => true` o erro aparece na tela           |

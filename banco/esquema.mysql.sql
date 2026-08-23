@@ -17,6 +17,16 @@ CREATE TABLE alunos (
     id        INT AUTO_INCREMENT PRIMARY KEY,
     nome      VARCHAR(100)  NOT NULL,
     email     VARCHAR(150)  NOT NULL UNIQUE,
+    -- Guarda o HASH da senha, nunca a senha digitada.
+    --
+    -- Por que 255 e nao 20, se a senha do aluno tem 6 caracteres?
+    -- Porque nao e a senha que fica aqui: e o resultado do password_hash(),
+    -- que hoje ocupa 60 caracteres (bcrypt) e pode crescer quando o PHP
+    -- adotar um algoritmo mais novo. 255 e a folga recomendada no manual.
+    --
+    -- Aceita NULL para o caso de um registro antigo, importado antes de a
+    -- tela de login existir. Quem esta sem senha simplesmente nao entra.
+    senha     VARCHAR(255)      NULL,
     curso     VARCHAR(60)   NOT NULL,
     nota      DECIMAL(4,2)      NULL,
     criado_em TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,

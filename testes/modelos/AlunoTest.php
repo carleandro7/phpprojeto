@@ -6,6 +6,7 @@ use Testes\Suporte\TesteBase;
 
 use InvalidArgumentException;
 use Modelos\Aluno;
+use Nucleo\Database;
 
 /**
  * Testes do MODELO: verificam o CRUD herdado de Nucleo\Model
@@ -163,10 +164,12 @@ class AlunoTest extends TesteBase
     public function testeValidacaoAceitaDadosCorretos(): void
     {
         $erros = $this->alunos->validar([
-            'nome'  => 'Ana Souza',
-            'email' => 'ana@escola.br',
-            'curso' => 'Informatica',
-            'nota'  => 8,
+            'nome'              => 'Ana Souza',
+            'email'             => 'ana@escola.br',
+            'senha'             => 'segredo123',
+            'senha_confirmacao' => 'segredo123',
+            'curso'             => 'Informatica',
+            'nota'              => 8,
         ]);
 
         $this->assertVazio($erros, 'Dados corretos nao deveriam gerar erros');
@@ -230,6 +233,178 @@ class AlunoTest extends TesteBase
         ], $id);
 
         $this->assertVazio($erros);
+    }
+
+    // ------------------------------------------------------------------
+    // Validacao da senha
+    // ------------------------------------------------------------------
+
+    public function testeValidacaoExigeSenhaNoCadastro(): void
+    {
+        $erros = $this->alunos->validar([
+            'nome'  => 'Ana Souza',
+            'email' => 'ana@escola.br',
+            'curso' => 'Informatica',
+        ]);
+
+        $this->assertTemChave('senha', $erros, 'Sem senha o aluno nunca conseguiria entrar');
+    }
+
+    public function testeValidacaoNaoExigeSenhaNaEdicao(): void
+    {
+        $id = $this->criarAlunoDeTeste('Ana', 'ana@escola.br');
+
+        // Campo em branco na edicao = "mantenha a senha atual".
+        $erros = $this->alunos->validar([
+            'nome'  => 'Ana Souza',
+            'email' => 'ana@escola.br',
+            'curso' => 'Informatica',
+            'senha' => '',
+        ], $id);
+
+        $this->assertVazio($erros);
+    }
+
+    public function testeValidacaoRecusaSenhaCurta(): void
+    {
+        $erros = $this->alunos->validar([
+            'nome'              => 'Ana Souza',
+            'email'             => 'ana@escola.br',
+            'curso'             => 'Informatica',
+            'senha'             => '123',
+            'senha_confirmacao' => '123',
+        ]);
+
+        $this->assertTemChave('senha', $erros);
+    }
+
+    public function testeValidacaoRecusaConfirmacaoDiferente(): void
+    {
+        $erros = $this->alunos->validar([
+            'nome'              => 'Ana Souza',
+            'email'             => 'ana@escola.br',
+            'curso'             => 'Informatica',
+            'senha'             => 'segredo123',
+            'senha_confirmacao' => 'segredo124',
+        ]);
+
+        $this->assertTemChave('senha_confirmacao', $erros);
+    }
+
+    // ------------------------------------------------------------------
+    // Senha no banco: hash, e nunca texto puro
+    // ------------------------------------------------------------------
+
+    public function testeGravaOHashDaSenhaENaoASenhaDigitada(): void
+    {
+        $id = $this->criarAlunoDeTeste('Ana', 'ana@escola.br', 'Informatica', null, '123456');
+
+        // Le direto do banco, sem passar pelo modelo: e a unica forma de
+        // conferir o que ficou GRAVADO de verdade na coluna.
+        $gravado = $this->senhaGravada($id);
+
+        $this->assertDiferente('123456', $gravado, 'A senha nao pode ir para o banco como foi digitada');
+        $this->assertVerdadeiro(
+            password_verify('123456', $gravado),
+            'O que esta gravado tem que ser o hash da senha digitada'
+        );
+    }
+
+    public function testeAMesmaSenhaGeraHashesDiferentes(): void
+    {
+        $ana   = $this->criarAlunoDeTeste('Ana', 'ana@escola.br', 'Informatica', null, '123456');
+        $bruno = $this->criarAlunoDeTeste('Bruno', 'bruno@escola.br', 'Informatica', null, '123456');
+
+        // Duas pessoas com a MESMA senha nao podem ter o mesmo hash: cada
+        // chamada de password_hash() sorteia um sal novo. E o que impede
+        // alguem de olhar a tabela e descobrir quem repetiu a senha.
+        $this->assertDiferente(
+            $this->senhaGravada($ana),
+            $this->senhaGravada($bruno),
+            'Cada hash tem que ter o proprio sal'
+        );
+    }
+
+    public function testeASenhaNaoSaiNasConsultas(): void
+    {
+        $id = $this->criarAlunoDeTeste('Ana', 'ana@escola.br', 'Informatica', null, '123456');
+
+        // $ocultos = ['senha'] no modelo: nenhuma consulta devolve a coluna.
+        $this->assertFalso(array_key_exists('senha', $this->alunos->buscar($id)));
+        $this->assertFalso(array_key_exists('senha', $this->alunos->todos()[0]));
+        $this->assertFalso(array_key_exists('senha', $this->alunos->onde('email', 'ana@escola.br')[0]));
+        $this->assertFalso(array_key_exists('senha', $this->alunos->procurar('Ana')[0]));
+    }
+
+    public function testeAtualizarSemSenhaMantemAAtual(): void
+    {
+        $id   = $this->criarAlunoDeTeste('Ana', 'ana@escola.br', 'Informatica', null, '123456');
+        $hash = $this->senhaGravada($id);
+
+        $this->alunos->atualizar($id, ['nome' => 'Ana Maria', 'senha' => '']);
+
+        $this->assertIgual('Ana Maria', $this->alunos->buscar($id)['nome']);
+        $this->assertIgual($hash, $this->senhaGravada($id), 'Campo em branco nao pode apagar a senha');
+    }
+
+    public function testeAtualizarComSenhaNovaTrocaOHash(): void
+    {
+        $id   = $this->criarAlunoDeTeste('Ana', 'ana@escola.br', 'Informatica', null, '123456');
+        $hash = $this->senhaGravada($id);
+
+        $this->alunos->atualizar($id, ['senha' => 'outrasenha']);
+
+        $this->assertDiferente($hash, $this->senhaGravada($id));
+        $this->assertVerdadeiro(password_verify('outrasenha', $this->senhaGravada($id)));
+        $this->assertFalso(password_verify('123456', $this->senhaGravada($id)), 'A senha antiga nao vale mais');
+    }
+
+    // ------------------------------------------------------------------
+    // Login  ->  autenticar()
+    // ------------------------------------------------------------------
+
+    public function testeAutenticaComEmailESenhaCorretos(): void
+    {
+        $id = $this->criarAlunoDeTeste('Ana Souza', 'ana@escola.br', 'Informatica', null, '123456');
+
+        $aluno = $this->alunos->autenticar('ana@escola.br', '123456');
+
+        $this->assertNaoNulo($aluno);
+        $this->assertIgual($id, $aluno['id']);
+        $this->assertIgual('Ana Souza', $aluno['nome']);
+    }
+
+    public function testeAutenticarNaoDevolveOHash(): void
+    {
+        $this->criarAlunoDeTeste('Ana', 'ana@escola.br', 'Informatica', null, '123456');
+
+        $aluno = $this->alunos->autenticar('ana@escola.br', '123456');
+
+        $this->assertFalso(
+            array_key_exists('senha', $aluno),
+            'Depois de conferida, a senha nao tem mais serventia nenhuma'
+        );
+    }
+
+    public function testeNaoAutenticaComSenhaErrada(): void
+    {
+        $this->criarAlunoDeTeste('Ana', 'ana@escola.br', 'Informatica', null, '123456');
+
+        $this->assertNulo($this->alunos->autenticar('ana@escola.br', '654321'));
+    }
+
+    public function testeNaoAutenticaEmailInexistente(): void
+    {
+        $this->assertNulo($this->alunos->autenticar('ninguem@escola.br', '123456'));
+    }
+
+    public function testeNaoAutenticaAlunoSemSenhaCadastrada(): void
+    {
+        // Registro antigo, criado antes de a tela de login existir.
+        $this->criarAlunoDeTeste('Sem Senha', 'sem.senha@escola.br');
+
+        $this->assertNulo($this->alunos->autenticar('sem.senha@escola.br', ''));
+        $this->assertNulo($this->alunos->autenticar('sem.senha@escola.br', '123456'));
     }
 
     // ------------------------------------------------------------------
@@ -315,13 +490,31 @@ class AlunoTest extends TesteBase
         string $nome,
         string $email,
         string $curso = 'Informatica',
-        ?float $nota = null
+        ?float $nota = null,
+        ?string $senha = null
     ): int {
         return $this->alunos->criar([
             'nome'  => $nome,
             'email' => $email,
+            'senha' => $senha,
             'curso' => $curso,
             'nota'  => $nota,
         ]);
+    }
+
+    /**
+     * Le a coluna senha DIRETO do banco, sem passar pelo modelo.
+     *
+     * O modelo esconde essa coluna de proposito ($ocultos), entao esta e a
+     * unica forma de o teste conferir o que ficou gravado de verdade. Um
+     * teste que so olhasse pelo modelo nunca perceberia uma senha em texto
+     * puro na tabela.
+     */
+    private function senhaGravada(int $id): string
+    {
+        $stmt = Database::conexao()->prepare('SELECT senha FROM alunos WHERE id = ?');
+        $stmt->execute([$id]);
+
+        return (string) $stmt->fetchColumn();
     }
 }

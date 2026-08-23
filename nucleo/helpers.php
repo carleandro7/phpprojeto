@@ -5,6 +5,7 @@
  * (controladores, modelos e views).
  */
 
+use Nucleo\Autenticacao;
 use Nucleo\Config;
 use Nucleo\Sessao;
 use Nucleo\View;
@@ -130,6 +131,34 @@ if (!function_exists('mensagens')) {
     function mensagens(): array
     {
         return Sessao::lerFlash();
+    }
+}
+
+if (!function_exists('esta_logado')) {
+    /**
+     * Tem um aluno logado nesta sessao?
+     *
+     *     <?php if (esta_logado()): ?> ... <?php endif ?>
+     */
+    function esta_logado(): bool
+    {
+        return Autenticacao::verificar();
+    }
+}
+
+if (!function_exists('aluno_logado')) {
+    /**
+     * Dados de quem esta logado (id, nome, email), ou null.
+     *
+     *     <?= e(aluno_logado()['nome']) ?>
+     *
+     * Atencao: e so um atalho para a VIEW mostrar o nome no cabecalho.
+     * Para PROTEGER uma pagina, use $this->exigirLogin() no controller —
+     * esconder o link nao impede ninguem de digitar o endereco.
+     */
+    function aluno_logado(): ?array
+    {
+        return Autenticacao::aluno();
     }
 }
 

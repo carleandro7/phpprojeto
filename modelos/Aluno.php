@@ -24,9 +24,10 @@ use Nucleo\Validador;
  * HERANCA: o "extends Model" traz o CRUD inteiro pronto de Nucleo\Model.
  *
  * Neste arquivo ficam apenas as PARTICULARIDADES desta tabela:
- *   1. as quatro propriedades de configuracao (logo abaixo);
+ *   1. as propriedades de configuracao (logo abaixo);
  *   2. as regras de validacao (metodo validar);
- *   3. as consultas que so fazem sentido para alunos (procurar, mediaGeral...).
+ *   3. o tratamento da senha (autenticar, protegerSenha);
+ *   4. as consultas que so fazem sentido para alunos (procurar, mediaGeral...).
  *
  * O que voce ganha de graca da classe-base (todos publicos):
  *   todos()        SELECT * FROM alunos ORDER BY $ordemPadrao
@@ -64,13 +65,38 @@ class Aluno extends Model
      * como "mass assignment". Tudo que estiver fora desta lista e descartado
      * em silencio por criar() e atualizar().
      */
-    protected array $preenchiveis = ['nome', 'email', 'curso', 'nota'];
+    protected array $preenchiveis = ['nome', 'email', 'senha', 'curso', 'nota'];
+
+    /**
+     * Colunas que nunca saem do modelo.
+     *
+     * A senha entra (esta em $preenchiveis) mas nao sai: todos(), buscar(),
+     * onde() e a rota /alunos/api devolvem as linhas SEM esta coluna.
+     *
+     * Mesmo guardando um hash — que ninguem consegue "desfazer" para
+     * descobrir a senha — nao ha motivo para ele circular pelas telas, pelo
+     * JSON ou por um var_dump. Quem tem o hash pode tentar adivinhar a senha
+     * offline, com calma, e quanto menos gente o enxerga, melhor.
+     */
+    protected array $ocultos = ['senha'];
 
     /**
      * Ordenacao usada pelo metodo todos().
      * Evita repetir "ORDER BY nome" em cada chamada.
      */
     protected string $ordemPadrao = 'nome ASC';
+
+    /** Tamanho minimo aceito para a senha do aluno. */
+    public const SENHA_MINIMA = 6;
+
+    /**
+     * Hash "de mentira", usado quando o e-mail nao existe.
+     *
+     * Serve para o login gastar o MESMO tempo respondendo "e-mail que nao
+     * existe" e "senha errada". Sem isso, a resposta que volta rapido demais
+     * entrega quais e-mails estao cadastrados no sistema.
+     */
+    private const HASH_DESCARTAVEL = '$2y$10$UkYoNZ5JRo8poaz/e600wuecQV9WYMykCgLa/RyNNSKh3oKPCo8Qi';
 
     /**
      * Opcoes do campo "curso" — usadas no formulario e na validacao.
@@ -98,9 +124,13 @@ class Aluno extends Model
      * se o array devolvido vier VAZIO.
      *
      * @param array           $dados      dados vindos do formulario
-     * @param int|string|null $ignorarId  id a ignorar na checagem de e-mail unico
-     *                                    (usado na edicao, senao o registro
-     *                                     acusaria conflito com ele mesmo)
+     * @param int|string|null $ignorarId  id do registro que esta sendo editado.
+     *                                    null = cadastro novo.
+     *                                    Ele diz duas coisas ao metodo: qual id
+     *                                    ignorar na checagem de e-mail unico
+     *                                    (senao o registro acusaria conflito
+     *                                     com ele mesmo) e se a senha e
+     *                                    obrigatoria (so e no cadastro).
      *
      * @return array<string,string> lista de erros (vazio = tudo certo)
      */
@@ -135,6 +165,33 @@ class Aluno extends Model
             $validador->personalizada('email', false, 'Este e-mail ja esta cadastrado.');
         }
 
+        // Senha: OBRIGATORIA no cadastro, OPCIONAL na edicao.
+        //
+        // O mesmo $ignorarId que identifica a edicao ali em cima resolve isto
+        // aqui: quando ele vem preenchido estamos editando um aluno que ja tem
+        // senha gravada, e deixar o campo em branco quer dizer "mantenha a que
+        // ja esta la" — nao "apague a minha senha".
+        $cadastrando = $ignorarId === null;
+        $senha       = (string) ($dados['senha'] ?? '');
+
+        if ($cadastrando) {
+            $validador->obrigatorio('senha', 'Senha');
+        }
+
+        if ($senha !== '') {
+            $validador->minimo('senha', self::SENHA_MINIMA, 'Senha');
+
+            // A confirmacao so existe no formulario: nao e coluna do banco nem
+            // esta em $preenchiveis, entao nunca chega ao INSERT. Ela serve
+            // apenas para o aluno nao gravar um erro de digitacao e depois
+            // descobrir que nao consegue mais entrar.
+            $validador->personalizada(
+                'senha_confirmacao',
+                $senha === (string) ($dados['senha_confirmacao'] ?? ''),
+                'As duas senhas nao sao iguais.'
+            );
+        }
+
         // Array "campo => mensagem". Vazio = pode gravar.
         return $validador->erros();
     }
@@ -163,6 +220,125 @@ class Aluno extends Model
         // ("5") e a URL tambem: com !== (que compara TIPO tambem), 5 !== "5"
         // daria verdadeiro por engano e o aluno nunca conseguiria se salvar.
         return $ignorarId === null || (string) $existente['id'] !== (string) $ignorarId;
+    }
+
+    // ------------------------------------------------------------------
+    // Senha e login
+    //
+    // ------------------------------------------------------------------
+    // POR QUE A SENHA NAO PODE SER GRAVADA COMO O ALUNO DIGITOU?
+    // ------------------------------------------------------------------
+    // Porque um dia alguem vai enxergar essa tabela: um backup perdido, um
+    // phpMyAdmin aberto, uma falha em outra parte do sistema. Se a coluna
+    // tiver "123456" escrito, a conta acabou. E, como quase todo mundo repete
+    // a mesma senha em varios sites, o estrago passa longe deste projeto.
+    //
+    // A saida NAO e "criptografar" no sentido literal. Criptografia tem
+    // volta: quem tem a chave desfaz. O que se usa aqui e um HASH, que e um
+    // caminho de mao unica:
+    //
+    //     password_hash('123456')  ->  '$2y$10$2QzNiRSJcwdcnhrM...'
+    //
+    // Desse texto ninguem volta para "123456". Nem nos. Por isso o sistema
+    // nunca consegue MOSTRAR a senha do aluno — so consegue CONFERIR se a que
+    // ele acabou de digitar gera o mesmo resultado, e quem faz essa conferencia
+    // e o password_verify().
+    //
+    // As duas funcoes ja vem no PHP e cuidam sozinhas do "sal" (um valor
+    // aleatorio por senha, para duas pessoas com a mesma senha nao terem o
+    // mesmo hash) e da lentidao proposital do algoritmo, que torna a tentativa
+    // de adivinhacao em massa inviavel.
+    // ------------------------------------------------------------------
+
+    /**
+     * Confere e-mail e senha. Devolve o aluno (sem a coluna senha) quando
+     * batem, ou null em qualquer outro caso.
+     *
+     * Repare que ele nao diz QUAL dos dois estava errado. Isso e de proposito:
+     * responder "este e-mail nao existe" entregaria a quem esta tentando
+     * invadir a lista de quem tem conta no sistema.
+     */
+    public function autenticar(string $email, string $senha): ?array
+    {
+        // consultarBruto() em vez de consultar(): so aqui o modelo precisa
+        // enxergar a coluna que ele mesmo escondeu em $ocultos.
+        $linhas = $this->consultarBruto(
+            'SELECT * FROM alunos WHERE email = ? LIMIT 1',
+            [$email]
+        );
+
+        $aluno = $linhas[0] ?? null;
+        $hash  = (string) ($aluno['senha'] ?? '');
+
+        // E-mail inexistente (ou aluno antigo, sem senha cadastrada).
+        if ($hash === '') {
+            // Compara contra um hash descartavel so para gastar o mesmo tempo
+            // que gastaria em uma conferencia de verdade. Veja o comentario da
+            // constante la em cima.
+            password_verify($senha, self::HASH_DESCARTAVEL);
+
+            return null;
+        }
+
+        // A UNICA forma de conferir uma senha: refazer a conta com o sal que
+        // esta guardado dentro do proprio hash e comparar os resultados.
+        // Nunca escreva  if ($senha === $aluno['senha']) — isso so funcionaria
+        // com a senha gravada em texto puro, que e exatamente o que evitamos.
+        if (!password_verify($senha, $hash)) {
+            return null;
+        }
+
+        // Deu certo. Tira o hash antes de devolver: daqui para frente ele nao
+        // tem mais serventia nenhuma, e vai parar na sessao do usuario.
+        unset($aluno['senha']);
+
+        return $aluno;
+    }
+
+    /**
+     * Sobrescreve o criar() da classe-base so para transformar a senha em
+     * hash antes do INSERT.
+     *
+     * Fazer isso AQUI, e nao no controller, garante que nao existe caminho
+     * possivel para gravar uma senha em texto puro: qualquer parte do sistema
+     * que chame criar() passa por esta linha.
+     */
+    public function criar(array $dados): int
+    {
+        return parent::criar($this->protegerSenha($dados));
+    }
+
+    /**
+     * Mesma ideia do criar(), agora para o UPDATE.
+     */
+    public function atualizar(int|string $id, array $dados): bool
+    {
+        return parent::atualizar($id, $this->protegerSenha($dados));
+    }
+
+    /**
+     * Troca a senha digitada pelo hash dela.
+     *
+     * Campo ausente ou em branco = o aluno nao quis mexer na senha; a chave
+     * e removida para o UPDATE nem citar a coluna e a senha atual continuar
+     * intacta no banco.
+     */
+    protected function protegerSenha(array $dados): array
+    {
+        $senha = (string) ($dados['senha'] ?? '');
+
+        if ($senha === '') {
+            unset($dados['senha']);
+
+            return $dados;
+        }
+
+        // PASSWORD_DEFAULT e o algoritmo que o PHP considera o melhor hoje
+        // (bcrypt). Usando a constante, o dia em que o PHP trocar de algoritmo
+        // este codigo acompanha sozinho — por isso a coluna e VARCHAR(255).
+        $dados['senha'] = password_hash($senha, PASSWORD_DEFAULT);
+
+        return $dados;
     }
 
     // ------------------------------------------------------------------

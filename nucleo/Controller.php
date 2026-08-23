@@ -6,8 +6,8 @@ namespace Nucleo;
  * Classe base de todos os controladores.
  *
  * O aluno cria uma classe em "controllers/", herda desta e ja tem pronto:
- * carregar view, carregar modelo, ler POST/GET, redirecionar, mensagens flash
- * e resposta em JSON.
+ * carregar view, carregar modelo, ler POST/GET, redirecionar, mensagens flash,
+ * resposta em JSON e a trava de login (exigirLogin).
  *
  * Exemplo:
  *
@@ -145,5 +145,40 @@ abstract class Controller
     protected function naoEncontrado(string $mensagem = 'Pagina nao encontrada'): never
     {
         throw new NaoEncontradoException($mensagem);
+    }
+
+    // ------------------------------------------------------------------
+    // Controle de acesso
+    // ------------------------------------------------------------------
+
+    /**
+     * Trava de acesso: so continua quem estiver logado. Quem nao estiver e
+     * mandado para a tela de login com um aviso.
+     *
+     * Chame na PRIMEIRA linha de todo metodo que nao pode ser aberto por
+     * qualquer um:
+     *
+     *     public function painel(): void
+     *     {
+     *         $logado = $this->exigirLogin();
+     *         ...
+     *     }
+     *
+     * Nao basta esconder o link no menu: o endereco continua funcionando se
+     * alguem digitar na barra do navegador. A trava tem que estar aqui, no
+     * servidor.
+     *
+     * @return array{id:int,nome:string,email:string} os dados de quem esta logado
+     */
+    protected function exigirLogin(): array
+    {
+        $logado = Autenticacao::aluno();
+
+        if ($logado === null) {
+            $this->mensagem('aviso', 'Faca login para acessar esta pagina.');
+            $this->redirecionar('login');
+        }
+
+        return $logado;
     }
 }

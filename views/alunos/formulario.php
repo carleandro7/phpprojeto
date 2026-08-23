@@ -45,6 +45,53 @@ $editando = $aluno !== null;
         <?php endif ?>
     </div>
 
+    <?php /*
+        SENHA
+        Os dois campos abaixo sao os unicos do formulario que nunca voltam
+        preenchidos: nao ha value="..." e nem poderia haver. O banco guarda
+        apenas o hash, e dele nao se recupera a senha digitada.
+
+        No CADASTRO a senha e obrigatoria. Na EDICAO ela e opcional: em branco
+        significa "mantenha a senha que ja esta la" — quem trata isso e o
+        protegerSenha() do modelo.
+    */ ?>
+    <div class="campo <?= tem_erro('senha') ? 'campo--erro' : '' ?>">
+        <label for="senha">
+            <?= $editando ? 'Nova senha' : 'Senha' ?>
+        </label>
+        <input
+            type="password"
+            id="senha"
+            name="senha"
+            minlength="<?= Aluno::SENHA_MINIMA ?>"
+            autocomplete="new-password"
+            <?= $editando ? '' : 'required' ?>
+        >
+        <?php if ($msg = erro_de('senha')): ?>
+            <span class="campo__erro"><?= e($msg) ?></span>
+        <?php else: ?>
+            <span class="campo__dica">
+                <?= $editando
+                    ? 'Deixe em branco para continuar com a senha atual.'
+                    : 'Pelo menos ' . Aluno::SENHA_MINIMA . ' caracteres.' ?>
+            </span>
+        <?php endif ?>
+    </div>
+
+    <div class="campo <?= tem_erro('senha_confirmacao') ? 'campo--erro' : '' ?>">
+        <label for="senha_confirmacao">Confirme a senha</label>
+        <input
+            type="password"
+            id="senha_confirmacao"
+            name="senha_confirmacao"
+            autocomplete="new-password"
+            <?= $editando ? '' : 'required' ?>
+        >
+        <?php if ($msg = erro_de('senha_confirmacao')): ?>
+            <span class="campo__erro"><?= e($msg) ?></span>
+        <?php endif ?>
+    </div>
+
     <div class="campo <?= tem_erro('curso') ? 'campo--erro' : '' ?>">
         <label for="curso">Curso</label>
         <select id="curso" name="curso" required>

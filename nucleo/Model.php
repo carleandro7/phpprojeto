@@ -38,6 +38,24 @@ abstract class Model
      */
     protected array $preenchiveis = [];
 
+    /**
+     * Colunas que NUNCA saem do modelo nas consultas.
+     *
+     * E o contrario de $preenchiveis: aquela lista diz o que pode ENTRAR,
+     * esta diz o que nao pode SAIR. Serve para colunas que existem no banco
+     * mas nao podem circular pelo sistema — o caso classico e a senha.
+     *
+     *     protected array $ocultos = ['senha'];
+     *
+     * Com isso, todos(), buscar(), onde() e qualquer consultar() devolvem as
+     * linhas SEM a coluna. Assim ninguem esquece de tira-la antes de jogar o
+     * array em uma view, em um var_dump ou em um json_encode.
+     *
+     * Quando o proprio modelo precisa do valor de verdade (para conferir a
+     * senha no login, por exemplo), ele usa consultarBruto().
+     */
+    protected array $ocultos = [];
+
     /** Ordenacao padrao das listagens. */
     protected string $ordemPadrao = '';
 
@@ -65,15 +83,48 @@ abstract class Model
     }
 
     /**
-     * Executa um SELECT livre e devolve todas as linhas.
+     * Executa um SELECT livre e devolve todas as linhas, ja sem as colunas
+     * declaradas em $ocultos.
+     *
      * Sempre use "?" ou ":nome" nos parametros — nunca concatene valores!
      */
     public function consultar(string $sql, array $parametros = []): array
+    {
+        return $this->esconder($this->consultarBruto($sql, $parametros));
+    }
+
+    /**
+     * Igual ao consultar(), mas devolve a linha COMPLETA, inclusive o que
+     * esta em $ocultos.
+     *
+     * E "protected" de proposito: so o proprio modelo pode chegar ao valor
+     * escondido, e apenas para uso interno (conferir a senha no login).
+     * Nenhum controller ou view enxerga este metodo.
+     */
+    protected function consultarBruto(string $sql, array $parametros = []): array
     {
         $stmt = $this->pdo()->prepare($sql);
         $stmt->execute($parametros);
 
         return $stmt->fetchAll();
+    }
+
+    /**
+     * Retira de cada linha as colunas listadas em $ocultos.
+     */
+    protected function esconder(array $linhas): array
+    {
+        if ($this->ocultos === []) {
+            return $linhas;
+        }
+
+        // array_diff_key mantem so as chaves que NAO estao na lista de ocultos.
+        $remover = array_flip($this->ocultos);
+
+        return array_map(
+            fn (array $linha) => array_diff_key($linha, $remover),
+            $linhas
+        );
     }
 
     /**

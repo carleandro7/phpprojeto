@@ -102,10 +102,12 @@ class AlunosControllerTest extends TesteBase
     public function testeSalvarGravaNoBancoERedireciona(): void
     {
         $resposta = $this->postar('alunos/salvar', [
-            'nome'  => 'Diego Fontes',
-            'email' => 'diego@escola.br',
-            'curso' => 'Edificacoes',
-            'nota'  => '7.5',
+            'nome'              => 'Diego Fontes',
+            'email'             => 'diego@escola.br',
+            'senha'             => 'segredo123',
+            'senha_confirmacao' => 'segredo123',
+            'curso'             => 'Edificacoes',
+            'nota'              => '7.5',
         ]);
 
         $this->assertVerdadeiro($resposta->foiRedirecionado(), 'Depois de salvar deve redirecionar');
@@ -225,10 +227,12 @@ class AlunosControllerTest extends TesteBase
     public function testeMostraMensagemDeSucessoAposCadastrar(): void
     {
         $this->postar('alunos/salvar', [
-            'nome'  => 'Elisa Prado',
-            'email' => 'elisa@escola.br',
-            'curso' => 'Enfermagem',
-            'nota'  => '10',
+            'nome'              => 'Elisa Prado',
+            'email'             => 'elisa@escola.br',
+            'senha'             => 'segredo123',
+            'senha_confirmacao' => 'segredo123',
+            'curso'             => 'Enfermagem',
+            'nota'              => '10',
         ]);
 
         // A mensagem foi guardada e deve aparecer na tela seguinte.

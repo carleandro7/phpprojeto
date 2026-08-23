@@ -404,6 +404,68 @@ têm cada um o seu `.htaccess` bloqueando acesso pelo navegador, e o
 
 ---
 
+### Senhas e login
+
+A tela de acesso fica em **`/login`**. As rotas são:
+
+| Rota                | Método | O que faz                              |
+|---------------------|--------|----------------------------------------|
+| `/login`            | GET    | formulário de e-mail e senha           |
+| `/login/entrar`     | POST   | confere os dados e abre a sessão       |
+| `/login/painel`     | GET    | exemplo de página que exige login      |
+| `/login/sair`       | POST   | encerra a sessão                       |
+
+**A senha nunca é gravada como foi digitada.** O que vai para a coluna
+`alunos.senha` é o resultado de `password_hash()`:
+
+```
+123456   ->   $2y$10$2QzNiRSJcwdcnhrMKrz.wuUBAOO2uIbgL81lE9Nuet6w8k5/I0002
+```
+
+Repare que isso **não é criptografia**: criptografia tem volta, quem tem a
+chave desfaz. Hash é um caminho de mão única — desse texto ninguém volta para
+`123456`, nem o próprio sistema. Por isso o site nunca consegue *mostrar* a
+senha do aluno; só consegue *conferir* se a que ele acabou de digitar gera o
+mesmo resultado, e quem faz isso é o `password_verify()`.
+
+Quem cuida disso é o modelo, em `Modelos\Aluno`:
+
+```php
+$modelo->criar(['nome' => 'Ana', 'senha' => '123456', ...]);  // grava o hash
+$modelo->autenticar('ana@escola.br', '123456');               // array ou null
+```
+
+Como o hash é feito dentro de `criar()`/`atualizar()`, **não existe caminho no
+sistema que grave uma senha em texto puro** — nem se o controlador esquecer.
+
+Três detalhes que valem a discussão em aula:
+
+- **Cada hash tem o seu "sal".** Os oito alunos de exemplo têm a mesma senha
+  (`123456`) e mesmo assim oito hashes diferentes. Sem isso, bastaria olhar a
+  tabela para saber quem repetiu senha.
+- **A coluna nunca sai do modelo.** `Modelos\Aluno` declara
+  `protected array $ocultos = ['senha']`, então `todos()`, `buscar()`, `onde()`
+  e a rota `/alunos/api` devolvem as linhas já sem ela.
+- **O erro de login não diz qual dos dois estava errado.** Sempre
+  "E-mail ou senha incorretos" — e `autenticar()` gasta o mesmo tempo nos dois
+  casos. Uma resposta diferente (ou mais rápida) entregaria quais e-mails têm
+  conta no sistema.
+
+Para proteger uma página, chame `exigirLogin()` na primeira linha do método:
+
+```php
+public function painel(): void
+{
+    $logado = $this->exigirLogin();   // sem login, volta para /login
+    ...
+}
+```
+
+Esconder o link no menu **não** protege nada: o endereço continua funcionando
+se alguém digitar na barra do navegador. A trava tem que estar no controlador.
+
+---
+
 ## 8. Testes
 
 Estrutura:
@@ -517,6 +579,12 @@ O `instalar.php` faz tudo sozinho:
 
 Pode rodar quantas vezes quiser — a tabela é recriada do zero.
 Para ver os dados no phpMyAdmin: <http://localhost/phpmyadmin>.
+
+> **Senha dos 8 alunos de exemplo: `123456`.**
+> Entre em <http://localhost/phpprojeto/login> com qualquer um dos e-mails
+> (por exemplo `ana.souza@escola.br`) para ver o login funcionando.
+> Vale abrir a tabela no phpMyAdmin depois: a coluna `senha` guarda o hash,
+> não a senha — e os oito hashes são diferentes entre si. Veja a seção 7.
 
 ### Voltar para o SQLite
 

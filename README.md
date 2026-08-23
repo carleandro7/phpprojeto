@@ -92,12 +92,14 @@ framework/
 │   ├── Validador.php        validação de formulários
 │   ├── Sql.php              proteções contra SQL Injection
 │   ├── Sessao.php           sessão e mensagens de sucesso/erro
+│   ├── Autenticacao.php     guarda na sessão quem fez login
 │   ├── Config.php           leitura das configurações
 │   └── helpers.php          funções de atalho: e(), url(), asset()...
 │
 ├── controllers/           CONTROLADORES (o que você escreve)
 │   ├── HomeController.php
-│   └── AlunosController.php   CRUD completo de exemplo
+│   ├── AlunosController.php   CRUD completo de exemplo
+│   └── LoginController.php    entrar, sair e uma página protegida
 │
 ├── modelos/               MODELOS (o que você escreve)
 │   └── Aluno.php
@@ -109,6 +111,7 @@ framework/
 │   ├── imagens/             logos, fotos, ícones
 │   ├── home/                telas do HomeController
 │   ├── alunos/              telas do AlunosController
+│   ├── login/               tela de acesso e área restrita
 │   └── erros/               404 e 500
 │
 ├── testes/                TESTES
@@ -290,6 +293,8 @@ Acesse `/professores`. Funcionando.
 | `erro_de('email')`            | mensagem de erro daquele campo                      |
 | `tem_erro('email')`           | true/false, para destacar o campo                   |
 | `mensagens()`                 | mensagens de sucesso/erro (flash)                   |
+| `esta_logado()`               | true/false: tem aluno logado nesta sessão?          |
+| `aluno_logado()`              | `['id','nome','email']` de quem entrou, ou `null`   |
 | `data_br('2026-08-12')`       | `12/08/2026`                                        |
 | `moeda_br(1234.5)`            | `1.234,50`                                          |
 | `dd($variavel)`               | depuração: mostra o conteúdo e para a execução      |

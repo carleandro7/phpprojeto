@@ -45,6 +45,7 @@ function gerarCrud(array $argumentos): void
     escrever(CAMINHO_VIEWS . "/{$pasta}/index.php", indexGerado($tabela, $campos));
     escrever(CAMINHO_VIEWS . "/{$pasta}/formulario.php", formularioGerado($tabela, $campos));
     escrever(CAMINHO_VIEWS . "/{$pasta}/ver.php", verGerado($tabela, $campos));
+    escrever(CAMINHO_RAIZ . "/testes/modelos/{$classe}Test.php", testeModeloGerado($tabela, $classe, $campos));
     file_put_contents(CAMINHO_BANCO . '/esquema.sqlite.sql', "\n" . esquema($tabela, $campos, false), FILE_APPEND | LOCK_EX);
     file_put_contents(CAMINHO_BANCO . '/esquema.mysql.sql', "\n" . esquema($tabela, $campos, true), FILE_APPEND | LOCK_EX);
     Database::migrar();
@@ -97,6 +98,38 @@ function verGerado(string $tabela, array $campos): string
 {
     $linhas = implode("\n", array_map(fn ($campo) => "<dt>{$campo[0]}</dt><dd><?= e(\$registro['{$campo[0]}'] ?? '') ?></dd>", $campos));
     return "<h1>Registro</h1><dl>\n{$linhas}\n</dl><a href=\"<?= url('{$tabela}') ?>\">Voltar</a>\n";
+}
+
+function testeModeloGerado(string $tabela, string $classe, array $campos): string
+{
+    $colunas = implode(",\n            ", array_map(fn ($campo) => "{$campo[0]} " . tipoSqlTeste($campo[1]), $campos));
+    $dados = implode(",\n            ", array_map(fn ($campo) => "'{$campo[0]}' => " . var_export(valorTeste($campo[1]), true), $campos));
+    $campo = $campos[0][0];
+    $valorAtualizado = var_export(valorTeste($campos[0][1], true), true);
+
+    return "<?php\n\nnamespace Testes\\Modelos;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Database;\nuse Testes\\Suporte\\TesteBase;\n\nclass {$classe}Test extends TesteBase\n{\n    private {$classe} \$modelo;\n\n    public function preparar(): void\n    {\n        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabela} (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            {$colunas}\n        )\");\n        Database::conexao()->exec('DELETE FROM {$tabela}');\n        \$this->modelo = new {$classe}();\n    }\n\n    public function testeExecutaCrudCompleto(): void\n    {\n        \$dados = [\n            {$dados}\n        ];\n        \$id = \$this->modelo->criar(\$dados);\n        \$registro = \$this->modelo->buscar(\$id);\n\n        \$this->assertVerdadeiro(\$id > 0);\n        \$this->assertIgual(\$dados['{$campo}'], \$registro['{$campo}']);\n        \$this->assertIgual(1, \$this->modelo->contar());\n\n        \$this->assertVerdadeiro(\$this->modelo->atualizar(\$id, ['{$campo}' => {$valorAtualizado}]));\n        \$this->assertIgual({$valorAtualizado}, \$this->modelo->buscar(\$id)['{$campo}']);\n        \$this->assertVerdadeiro(\$this->modelo->excluir(\$id));\n        \$this->assertNulo(\$this->modelo->buscar(\$id));\n    }\n}\n";
+}
+
+function tipoSqlTeste(string $tipo): string
+{
+    return match ($tipo) {
+        'integer', 'boolean' => 'INTEGER',
+        'decimal' => 'REAL',
+        default => 'TEXT',
+    } . ' NULL';
+}
+
+function valorTeste(string $tipo, bool $atualizado = false): mixed
+{
+    return match ($tipo) {
+        'integer' => $atualizado ? 2 : 1,
+        'decimal' => $atualizado ? 20.5 : 10.5,
+        'boolean' => $atualizado ? 0 : 1,
+        'date' => $atualizado ? '2026-02-02' : '2026-01-01',
+        'datetime' => $atualizado ? '2026-02-02 12:00:00' : '2026-01-01 10:00:00',
+        'time' => $atualizado ? '12:00:00' : '10:00:00',
+        default => $atualizado ? 'Atualizado' : 'Teste',
+    };
 }
 
 function esquema(string $tabela, array $campos, bool $mysql): string

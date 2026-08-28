@@ -39,6 +39,7 @@ O comando:
 - cria o modelo `modelos/Produto.php`;
 - cria `controllers/ProdutosController.php`;
 - cria as views em `views/produtos/`;
+- cria o teste `testes/modelos/ProdutoTest.php`;
 - adiciona a tabela aos esquemas SQLite e MySQL;
 - executa o esquema do driver configurado.
 
@@ -91,6 +92,17 @@ $produto->excluir($id);
 
 Use o modelo para validacoes e consultas especificas. Use o controller para
 receber dados e escolher a view. Use as views somente para HTML.
+
+O teste gerado usa o banco SQLite em memoria e verifica o CRUD basico do
+modelo: criar, buscar, contar, atualizar e excluir. Rode somente esse teste
+com o filtro:
+
+```bash
+php testes/executar.php ProdutoTest
+```
+
+Depois de personalizar o modelo ou o controller, amplie esse teste com as
+regras especificas da sua aplicacao.
 
 ## 3. Adicionar login
 

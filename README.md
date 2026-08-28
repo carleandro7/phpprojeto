@@ -26,7 +26,7 @@ php console.php scaffold:crud tabela campo:tipo campo2:tipo
 ```
 
 Tipos aceitos: `string`, `text`, `integer`, `decimal`, `boolean`, `date`,
-`datetime` e `time`. O comando gera modelo, controller, views e esquema para
+`datetime` e `time`. O comando gera modelo, controller, views, teste e esquema para
 SQLite/MySQL. Ele nao sobrescreve arquivos existentes.
 
 ### Autenticacao

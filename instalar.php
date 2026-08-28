@@ -1,12 +1,12 @@
 <?php
 
 /**
- * Instalador do framework: cria as tabelas e insere os dados de exemplo.
+ * Instalador do framework: prepara o banco sem criar tabelas da aplicacao.
  *
  * Pelo terminal:      php instalar.php
  * Pelo navegador:     http://localhost/framework/instalar.php
  *
- * Pode rodar quantas vezes quiser — o banco e recriado do zero.
+ * O esquema da aplicacao deve ser criado pelos comandos do console.
  */
 
 require_once __DIR__ . '/nucleo/bootstrap.php';
@@ -44,19 +44,13 @@ try {
     }
 
     Database::migrar();
-    $escrever('[ok] Tabelas criadas.');
-
-    Database::popular();
-    $escrever('[ok] Dados de exemplo inseridos.');
-
-    $total = Database::conexao()
-        ->query('SELECT COUNT(*) FROM alunos')
-        ->fetchColumn();
-
-    $escrever("[ok] {$total} alunos cadastrados.");
+    $escrever('[ok] Banco de dados pronto. Nenhuma tabela padrao foi criada.');
     $escrever('');
     $escrever('Pronto! Agora rode o servidor:');
     $escrever('    php -S localhost:8000 roteador.php');
+    $escrever('');
+    $escrever('Para criar sua primeira tabela:');
+    $escrever('    php console.php scaffold:crud Produto nome:string preco:decimal');
     $escrever('');
     $escrever('E os testes:');
     $escrever('    php testes/executar.php');

@@ -17,7 +17,7 @@ php testes/executar.php
 A subpasta vira parte do namespace:
 
 ```
-testes/modelos/AlunoTest.php        →  Testes\Modelos\AlunoTest
+testes/modelos/ProdutoTest.php      →  Testes\Modelos\ProdutoTest
 testes/controllers/HomeTest.php     →  Testes\Controllers\HomeTest
 ```
 
@@ -34,7 +34,7 @@ Crie novas pastas à vontade — o executor procura recursivamente.
 
 ```bash
 php testes/executar.php Modelos          # a pasta modelos
-php testes/executar.php AlunoTest        # um arquivo
+php testes/executar.php ViewTest         # um arquivo
 php testes/executar.php SegurancaSql     # outro arquivo
 php testes/executar.php validacao        # qualquer teste com "validacao" no nome
 ```
@@ -50,7 +50,7 @@ Por isso cada teste precisa criar os dados de que precisa, normalmente no
 ```php
 public function preparar(): void
 {
-    $this->limparTabela('alunos');
+    $this->limparTabela('produtos');
 }
 ```
 

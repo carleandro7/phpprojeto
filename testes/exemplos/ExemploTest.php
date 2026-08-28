@@ -23,7 +23,7 @@ class ExemploTest extends TesteBase
      */
     public function preparar(): void
     {
-        // Ex.: $this->limparTabela('alunos');
+        // Ex.: $this->limparTabela('produtos');
     }
 
     /**
@@ -95,7 +95,7 @@ class ExemploTest extends TesteBase
         // que aparece quando o teste falha.
         $this->assertVerdadeiro(
             $idade < 18,
-            'Um aluno do tecnico integrado normalmente e menor de idade'
+            'Um registro pode conter qualquer regra de negocio'
         );
     }
 }

@@ -5,7 +5,7 @@ namespace Nucleo;
 /**
  * Classe base de todos os controladores.
  *
- * O aluno cria uma classe em "controllers/", herda desta e ja tem pronto:
+ * O programador cria uma classe em "controllers/", herda desta e ja tem pronto:
  * carregar view, carregar modelo, ler POST/GET, redirecionar, mensagens flash
  * e resposta em JSON.
  *
@@ -40,7 +40,7 @@ abstract class Controller
     /**
      * Instancia um modelo da pasta "modelos".
      *
-     *     $alunos = $this->modelo('Aluno');
+    *     $produtos = $this->modelo('Produto');
      */
     protected function modelo(string $nome): Model
     {
@@ -111,7 +111,7 @@ abstract class Controller
     /**
      * Manda o navegador para outra rota interna.
      *
-     *     $this->redirecionar('alunos');
+    *     $this->redirecionar('produtos');
      */
     protected function redirecionar(string $rota = ''): never
     {
@@ -145,5 +145,14 @@ abstract class Controller
     protected function naoEncontrado(string $mensagem = 'Pagina nao encontrada'): never
     {
         throw new NaoEncontradoException($mensagem);
+    }
+
+    /** Redireciona visitantes sem sessao para a tela de login. */
+    protected function exigirAutenticacao(): void
+    {
+        if (!Sessao::tem('usuario_id')) {
+            $this->mensagem('aviso', 'Entre para continuar.');
+            $this->redirecionar('auth/login');
+        }
     }
 }

@@ -34,25 +34,25 @@ class RoteamentoTest extends TesteBase
 
     public function testeUrlComApenasOControladorUsaIndex(): void
     {
-        [$controlador, $metodo] = $this->app->analisar('alunos');
+        [$controlador, $metodo] = $this->app->analisar('produtos');
 
-        $this->assertIgual('Alunos', $controlador);
+        $this->assertIgual('Produtos', $controlador);
         $this->assertIgual('index', $metodo);
     }
 
     public function testeUrlComControladorEMetodo(): void
     {
-        [$controlador, $metodo] = $this->app->analisar('alunos/criar');
+        [$controlador, $metodo] = $this->app->analisar('produtos/criar');
 
-        $this->assertIgual('Alunos', $controlador);
+        $this->assertIgual('Produtos', $controlador);
         $this->assertIgual('criar', $metodo);
     }
 
     public function testeUrlComParametros(): void
     {
-        [$controlador, $metodo, $parametros] = $this->app->analisar('alunos/ver/7');
+        [$controlador, $metodo, $parametros] = $this->app->analisar('produtos/ver/7');
 
-        $this->assertIgual('Alunos', $controlador);
+        $this->assertIgual('Produtos', $controlador);
         $this->assertIgual('ver', $metodo);
         $this->assertTotal(1, $parametros);
         $this->assertIgual('7', $parametros[0]);
@@ -69,9 +69,9 @@ class RoteamentoTest extends TesteBase
 
     public function testeIgnoraBarrasSobrandoNaUrl(): void
     {
-        [$controlador, $metodo] = $this->app->analisar('///alunos//criar//');
+        [$controlador, $metodo] = $this->app->analisar('///produtos//criar//');
 
-        $this->assertIgual('Alunos', $controlador);
+        $this->assertIgual('Produtos', $controlador);
         $this->assertIgual('criar', $metodo);
     }
 
@@ -113,20 +113,20 @@ class RoteamentoTest extends TesteBase
 
     public function testeMetodoInexistenteRetorna404(): void
     {
-        $this->assertIgual(404, $this->requisitar('alunos/metodo-inventado')->status);
+        $this->assertIgual(404, $this->requisitar('produtos/metodo-inventado')->status);
     }
 
     public function testeMetodoQueExigeParametroSemReceberRetorna404(): void
     {
         // ver() exige o id; sem ele a rota nao pode ser executada.
-        $this->assertIgual(404, $this->requisitar('alunos/ver')->status);
+        $this->assertIgual(404, $this->requisitar('produtos/ver')->status);
     }
 
     public function testeMetodoPrivadoNaoViraRota(): void
     {
         // HomeController nao tem metodos privados expostos; ja o construtor
         // (__construct) jamais pode ser chamado pela URL.
-        $this->assertIgual(404, $this->requisitar('alunos/__construct')->status);
+        $this->assertIgual(404, $this->requisitar('produtos/__construct')->status);
     }
 
     // ------------------------------------------------------------------
@@ -146,8 +146,8 @@ class RoteamentoTest extends TesteBase
 
     public function testeTituloDaPaginaVemDoControlador(): void
     {
-        $html = $this->requisitar('alunos')->html;
+        $html = $this->requisitar('home')->html;
 
-        $this->assertContem('<title>Alunos |', $html);
+        $this->assertContem('<title>Inicio |', $html);
     }
 }

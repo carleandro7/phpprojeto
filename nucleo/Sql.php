@@ -15,7 +15,7 @@ use InvalidArgumentException;
  *   1. VALORES  (o nome digitado, a nota, o id...)
  *      -> NUNCA entram no texto do SQL. Vao sempre como parametro:
  *
- *           $this->consultar('SELECT * FROM alunos WHERE nome = ?', [$nome]);
+    *           $this->consultar('SELECT * FROM produtos WHERE nome = ?', [$nome]);
  *
  *         O PDO envia o comando e os valores separadamente, entao nao
  *         importa o que o usuario digitou: aquilo sera tratado como texto,
@@ -37,8 +37,8 @@ class Sql
     /**
      * Valida o nome de uma tabela ou coluna.
      *
-     * Aceita: nome, nome_completo, alunos2
-     * Recusa: "nome; DROP TABLE alunos", "nome--", "a b", "alunos.nome"
+    * Aceita: nome, nome_completo, produtos2
+    * Recusa: "nome; DROP TABLE produtos", "nome--", "a b", "produtos.nome"
      */
     public static function identificador(string $nome, string $tipo = 'identificador'): string
     {
@@ -94,7 +94,7 @@ class Sql
      * Monta a lista de marcadores "?" para um IN (...).
      *
      *     $marcadores = Sql::marcadores($ids);            // "?, ?, ?"
-     *     $sql = "SELECT * FROM alunos WHERE id IN ({$marcadores})";
+    *     $sql = "SELECT * FROM produtos WHERE id IN ({$marcadores})";
      *     $this->consultar($sql, $ids);
      */
     public static function marcadores(array $valores): string
@@ -124,7 +124,7 @@ class Sql
      *
      * Sem isso, quem pesquisasse por "%" veria a tabela inteira.
      *
-     *     $sql = 'SELECT * FROM alunos WHERE nome LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;
+    *     $sql = 'SELECT * FROM produtos WHERE nome LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;
      *     $this->consultar($sql, [Sql::comoLike($termo)]);
      *
      * @param string $posicao 'ambos' (padrao), 'inicio' ou 'fim'

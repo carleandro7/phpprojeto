@@ -4,7 +4,7 @@ banco/*.sqlite-journal
 banco/*.sqlite-wal
 banco/*.sqlite-shm
 
-# Configuracoes locais de cada aluno (senha do MySQL, etc.)
+# Configuracoes locais de cada desenvolvedor (senha do MySQL, etc.)
 configuracoes/banco.local.php
 
 # Sistema operacional / editor

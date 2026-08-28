@@ -24,9 +24,6 @@ Config::definir('banco.sqlite.arquivo', ':memory:');
 // Se alguma conexao ja tinha sido aberta, descarta.
 Database::desconectar();
 
-// Cria as tabelas no banco em memoria.
-Database::migrar();
-
 // ---------------------------------------------------------------------
 // Ambiente de requisicao simulado
 // ---------------------------------------------------------------------

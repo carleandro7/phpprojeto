@@ -10,8 +10,8 @@ $secao     = explode('/', $rotaAtual)[0] ?: 'home';
 
 $itens = [
     'home'   => ['rota' => '',       'texto' => 'Inicio'],
-    'alunos' => ['rota' => 'alunos', 'texto' => 'Alunos'],
 ];
+
 ?>
 <header class="cabecalho">
     <div class="cabecalho__interno">
@@ -30,9 +30,11 @@ $itens = [
                 </a>
             <?php endforeach ?>
 
-            <a class="menu__item menu__item--destaque" href="<?= url('alunos/criar') ?>">
-                + Novo aluno
-            </a>
+            <?php if (autenticado()): ?>
+                <a class="menu__item" href="<?= url('auth/sair') ?>">Sair</a>
+            <?php elseif (is_file(CAMINHO_CONTROLLERS . '/AuthController.php')): ?>
+                <a class="menu__item menu__item--destaque" href="<?= url('auth/login') ?>">Entrar</a>
+            <?php endif ?>
         </nav>
     </div>
 </header>

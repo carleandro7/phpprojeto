@@ -16,7 +16,7 @@ class View
     /**
      * Renderiza a view e imprime o resultado.
      *
-     * @param string      $view   caminho relativo dentro de views, sem .php. Ex.: 'alunos/index'
+    * @param string      $view   caminho relativo dentro de views, sem .php. Ex.: 'produtos/index'
      * @param array       $dados  variaveis disponiveis dentro da view
      * @param string|null $layout template a usar, ou null para nao usar nenhum
      */
@@ -52,7 +52,7 @@ class View
     }
 
     /**
-     * Transforma 'alunos/index' no caminho absoluto do arquivo.
+    * Transforma 'produtos/index' no caminho absoluto do arquivo.
      */
     private static function caminho(string $view): string
     {

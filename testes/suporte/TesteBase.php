@@ -240,8 +240,8 @@ abstract class TesteBase
     /**
      * Simula um acesso do navegador e devolve a resposta gerada.
      *
-     *     $r = $this->requisitar('alunos');
-     *     $r = $this->requisitar('alunos/salvar', 'POST', ['nome' => 'Ana']);
+    *     $r = $this->requisitar('produtos');
+    *     $r = $this->requisitar('produtos/salvar', 'POST', ['nome' => 'Ana']);
      */
     protected function requisitar(string $url, string $metodo = 'GET', array $dados = []): Resposta
     {

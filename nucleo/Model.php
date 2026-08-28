@@ -8,19 +8,19 @@ use PDO;
 /**
  * Classe base de todos os modelos.
  *
- * O aluno so precisa criar uma classe em "modelos/", herdar desta e informar
+ * O programador so precisa criar uma classe em "modelos/", herdar desta e informar
  * o nome da tabela. Todo o CRUD (Create, Read, Update, Delete) ja vem pronto.
  *
  * Exemplo minimo:
  *
- *     class Aluno extends \Nucleo\Model
+ *     class Produto extends \Nucleo\Model
  *     {
- *         protected string $tabela       = 'alunos';
+ *         protected string $tabela       = 'produtos';
  *         protected array  $preenchiveis = ['nome', 'email'];
  *     }
  *
  * Uso:
- *     $modelo = new Aluno();
+ *     $modelo = new Produto();
  *     $modelo->todos();
  *     $modelo->criar(['nome' => 'Ana', 'email' => 'ana@escola.br']);
  */

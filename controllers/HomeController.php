@@ -16,13 +16,8 @@ class HomeController extends Controller
 {
     public function index(): void
     {
-        $alunos = $this->modelo('Aluno');
-
         $this->view('home/index', [
-            'titulo'        => 'Inicio',
-            'totalAlunos'   => $alunos->contar(),
-            'media'         => $alunos->mediaGeral(),
-            'totalPorCurso' => $alunos->totalPorCurso(),
+            'titulo' => 'Inicio',
         ]);
     }
 

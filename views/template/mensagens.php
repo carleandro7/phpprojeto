@@ -2,7 +2,7 @@
 /**
  * Exibe as mensagens rapidas (flash) gravadas pelos controladores:
  *
- *     $this->mensagem('sucesso', 'Aluno cadastrado!');
+ *     $this->mensagem('sucesso', 'Registro cadastrado!');
  *
  * Depois de exibidas, as mensagens somem.
  */

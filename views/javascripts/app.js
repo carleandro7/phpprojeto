@@ -61,23 +61,3 @@ document.addEventListener('DOMContentLoaded', function () {
         primeiroCampo.focus();
     }
 });
-
-/* ---------------------------------------------------------------------
-   Exemplo de AJAX consumindo a rota /alunos/api
-   Abra o console do navegador e digite: carregarAlunos()
-   --------------------------------------------------------------------- */
-function carregarAlunos() {
-    var base = document.querySelector('link[rel="stylesheet"]').href.split('/views/')[0];
-
-    return fetch(base + '/alunos/api')
-        .then(function (resposta) { return resposta.json(); })
-        .then(function (dados) {
-            console.log('Total de alunos:', dados.total);
-            console.log('Media geral:', dados.media);
-            console.table(dados.alunos);
-            return dados;
-        })
-        .catch(function (erro) {
-            console.error('Falha ao carregar os alunos:', erro);
-        });
-}

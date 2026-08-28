@@ -16,7 +16,7 @@ use Throwable;
  *
  * A subpasta vira parte do namespace, seguindo o autoloader:
  *
- *     testes/modelos/AlunoTest.php      ->  Testes\Modelos\AlunoTest
+ *     testes/modelos/ProdutoTest.php    ->  Testes\Modelos\ProdutoTest
  *     testes/controllers/HomeTest.php   ->  Testes\Controllers\HomeTest
  *
  * A pasta testes/suporte guarda o motor de testes e e ignorada

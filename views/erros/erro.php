@@ -2,7 +2,7 @@
 /**
  * Tela de erro interno (500).
  *
- * Com app.debug = true mostra os detalhes tecnicos para o aluno depurar.
+ * Com app.debug = true mostra os detalhes tecnicos para depuracao.
  * Com app.debug = false mostra apenas uma mensagem generica.
  *
  * Recebe: $erro (Throwable), $debug (bool)

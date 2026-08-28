@@ -115,7 +115,7 @@ class Validador
     }
 
     /**
-     * Regra livre: o aluno passa a propria condicao.
+    * Regra livre: o programador passa a propria condicao.
      */
     public function personalizada(string $campo, bool $condicaoValida, string $mensagem): static
     {

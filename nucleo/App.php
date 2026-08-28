@@ -12,9 +12,9 @@ use Throwable;
  * Padrao de rota (roteamento por convencao):
  *
  *     /                          -> HomeController::index()
- *     /alunos                    -> AlunosController::index()
- *     /alunos/ver/7              -> AlunosController::ver(7)
- *     /alunos/editar/7           -> AlunosController::editar(7)
+ *     /produtos                  -> ProdutosController::index()
+ *     /produtos/ver/7            -> ProdutosController::ver(7)
+ *     /produtos/editar/7         -> ProdutosController::editar(7)
  *
  * Ou seja: /controlador/metodo/parametro1/parametro2...
  */
@@ -128,7 +128,7 @@ class App
     }
 
     /**
-     * 'alunos'     -> 'Alunos'
+    * 'produtos'   -> 'Produtos'
      * 'nota-final' -> 'NotaFinal'
      */
     private function normalizarNome(string $nome): string

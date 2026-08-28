@@ -14,7 +14,7 @@ if (!function_exists('e')) {
      * "Escapa" um texto antes de imprimir no HTML.
      * Protege contra XSS. Use SEMPRE ao exibir dados vindos do usuario:
      *
-     *     <?= e($aluno['nome']) ?>
+    *     <?= e($registro['nome']) ?>
      */
     function e(?string $texto): string
     {
@@ -49,8 +49,8 @@ if (!function_exists('url')) {
      * Monta um link interno.
      *
      *     url()                 -> /framework
-     *     url('alunos')         -> /framework/alunos
-     *     url('alunos/ver/7')   -> /framework/alunos/ver/7
+    *     url('produtos')       -> /framework/produtos
+    *     url('produtos/ver/7') -> /framework/produtos/ver/7
      */
     function url(string $rota = ''): string
     {
@@ -91,7 +91,7 @@ if (!function_exists('antigo')) {
      * Recupera o valor digitado antes de um erro de validacao,
      * para nao obrigar o usuario a preencher o formulario de novo.
      *
-     *     <input name="nome" value="<?= e(antigo('nome', $aluno['nome'] ?? '')) ?>">
+    *     <input name="nome" value="<?= e(antigo('nome', $registro['nome'] ?? '')) ?>">
      */
     function antigo(string $campo, mixed $padrao = ''): mixed
     {
@@ -130,6 +130,20 @@ if (!function_exists('mensagens')) {
     function mensagens(): array
     {
         return Sessao::lerFlash();
+    }
+}
+
+if (!function_exists('autenticado')) {
+    function autenticado(): bool
+    {
+        return Sessao::tem('usuario_id');
+    }
+}
+
+if (!function_exists('usuario_id')) {
+    function usuario_id(): mixed
+    {
+        return Sessao::obter('usuario_id');
     }
 }
 

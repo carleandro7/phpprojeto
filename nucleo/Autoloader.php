@@ -10,8 +10,8 @@ namespace Nucleo;
  * ele chama a funcao registrada em spl_autoload_register e nos localizamos
  * o arquivo correspondente.
  *
- * Exemplo: a classe Controllers\AlunosController vira o arquivo
- *          controllers/AlunosController.php
+ * Exemplo: a classe Controllers\ProdutosController vira o arquivo
+ *          controllers/ProdutosController.php
  */
 class Autoloader
 {

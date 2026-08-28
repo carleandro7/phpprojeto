@@ -7,7 +7,7 @@ namespace Testes\Suporte;
  *
  * Devolvida por TesteBase::requisitar():
  *
- *     $resposta = $this->requisitar('alunos');
+ *     $resposta = $this->requisitar('produtos');
  *     $resposta->html                 -> o HTML gerado
  *     $resposta->status               -> 200, 302, 404...
  *     $resposta->redirecionamento     -> destino, quando houve redirect

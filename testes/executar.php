@@ -9,8 +9,8 @@
  * Rodar apenas uma pasta, um arquivo ou um metodo (filtro por texto):
  *     php testes/executar.php Modelos            (pasta testes/modelos)
  *     php testes/executar.php Controllers        (pasta testes/controllers)
- *     php testes/executar.php AlunoTest
- *     php testes/executar.php Controllers\AlunosControllerTest::testeLista
+ *     php testes/executar.php ViewTest
+ *     php testes/executar.php Nucleo\RoteamentoTest::testeRaiz
  *     php testes/executar.php validacao
  */
 

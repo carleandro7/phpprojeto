@@ -7,8 +7,8 @@
  *   1. Inicie o MySQL no painel de controle do XAMPP
  *   2. Rode:  php instalar.php
  *
- * O instalador cria o banco, as tabelas e os dados de exemplo sozinho,
- * nao precisa criar nada na mao pelo phpMyAdmin.
+ * O instalador cria o banco e executa os esquemas gerados pelo console.
+ * O projeto comeca sem tabelas ou dados de exemplo.
  *
  * Para voltar ao SQLite (nao precisa de servidor nenhum, o banco e um unico
  * arquivo em banco/dados.sqlite): troque 'driver' para 'sqlite' e rode o

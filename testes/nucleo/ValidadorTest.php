@@ -60,11 +60,11 @@ class ValidadorTest extends TesteBase
 
     public function testeEmailValidoEInvalido(): void
     {
-        $bom = new Validador(['email' => 'aluno@escola.br']);
+        $bom = new Validador(['email' => 'pessoa@exemplo.br']);
         $bom->email('email');
         $this->assertVerdadeiro($bom->passou());
 
-        $ruim = new Validador(['email' => 'aluno-arroba-escola']);
+        $ruim = new Validador(['email' => 'email-invalido']);
         $ruim->email('email');
         $this->assertVerdadeiro($ruim->falhou());
     }
@@ -105,10 +105,10 @@ class ValidadorTest extends TesteBase
         $idade = 15;
 
         $validador = new Validador(['idade' => $idade]);
-        $validador->personalizada('idade', $idade >= 16, 'O aluno precisa ter 16 anos ou mais.');
+        $validador->personalizada('idade', $idade >= 16, 'A idade deve ser de 16 anos ou mais.');
 
         $this->assertVerdadeiro($validador->falhou());
-        $this->assertIgual('O aluno precisa ter 16 anos ou mais.', $validador->erroDe('idade'));
+        $this->assertIgual('A idade deve ser de 16 anos ou mais.', $validador->erroDe('idade'));
     }
 
     public function testeGuardaApenasOPrimeiroErroDeCadaCampo(): void

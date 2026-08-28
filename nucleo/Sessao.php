@@ -6,7 +6,7 @@ namespace Nucleo;
  * Facilita o uso da sessao ($_SESSION) e das "mensagens rapidas" (flash).
  *
  * Mensagem flash e aquela que aparece uma unica vez, tipicamente depois de
- * salvar um formulario: "Aluno cadastrado com sucesso!".
+ * salvar um formulario: "Registro cadastrado com sucesso!".
  *
  * Como funciona o ciclo:
  *   1. O controlador chama Sessao::flash('sucesso', '...') e redireciona.

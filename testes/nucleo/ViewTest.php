@@ -72,8 +72,8 @@ class ViewTest extends TesteBase
 
     public function testeMontaUrlInterna(): void
     {
-        $this->assertContem('/alunos/ver/7', url('alunos/ver/7'));
-        $this->assertContem('/alunos', url('/alunos/'));
+        $this->assertContem('/produtos/ver/7', url('produtos/ver/7'));
+        $this->assertContem('/produtos', url('/produtos/'));
     }
 
     public function testeMontaCaminhoDeArquivoEstatico(): void
@@ -101,17 +101,9 @@ class ViewTest extends TesteBase
     // Seguranca nas telas
     // ------------------------------------------------------------------
 
-    public function testeNomeDeAlunoComHtmlNaoEhExecutado(): void
+    public function testeHtmlEscapadoNaoEhExecutado(): void
     {
-        $this->limparTabela('alunos');
-
-        (new \Modelos\Aluno())->criar([
-            'nome'  => '<script>alert(1)</script>',
-            'email' => 'xss@escola.br',
-            'curso' => 'Informatica',
-        ]);
-
-        $html = $this->requisitar('alunos')->html;
+        $html = e('<script>alert(1)</script>');
 
         $this->assertNaoContem('<script>alert(1)</script>', $html, 'A view deve escapar o conteudo com e()');
         $this->assertContem('&lt;script&gt;', $html);

@@ -5,12 +5,9 @@
 ?>
 <footer class="rodape">
     <div class="rodape__interno">
-        <p>
+        <p class="mb-0">
             <?= e(Nucleo\Config::obter('app.nome', 'Framework MVC')) ?>
-            &mdash; material didatico de Desenvolvimento Web
-        </p>
-        <p class="rodape__nota">
-            <?= date('Y') ?> &middot; PHP <?= PHP_VERSION ?>
+            <span class="rodape__nota">&middot; <?= date('Y') ?> &middot; PHP <?= PHP_VERSION ?></span>
         </p>
     </div>
 </footer>

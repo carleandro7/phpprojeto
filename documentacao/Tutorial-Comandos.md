@@ -3,6 +3,9 @@
 Este tutorial mostra como iniciar uma aplicacao do zero usando o console do
 framework. O projeto nao cria tabelas nem dados de exemplo automaticamente.
 
+Para consultar somente a sintaxe de todos os comandos, veja a
+[Referencia de comandos](Referencia-Comandos.md).
+
 ## 1. Preparar o projeto
 
 Requisitos:
@@ -59,6 +62,14 @@ O comando:
 O campo `id` e criado automaticamente e nao deve ser informado. O campo
 `criado_em` tambem e reservado.
 
+Se a tabela ja existia de uma execucao anterior, o scaffold preserva os dados
+e adiciona automaticamente as colunas novas. Para corrigir manualmente uma
+tabela criada antes dessa melhoria, adicione a coluna ausente no MySQL:
+
+```sql
+ALTER TABLE produtos ADD COLUMN estoque INT NULL;
+```
+
 ### Rotas geradas
 
 Para o exemplo `produtos`, as rotas serao:
@@ -103,6 +114,21 @@ php testes/executar.php ProdutoTest
 
 Depois de personalizar o modelo ou o controller, amplie esse teste com as
 regras especificas da sua aplicacao.
+
+### Relacao 1:N com select
+
+Crie primeiro a tabela pai e depois informe a relacao no campo da tabela
+filha:
+
+```bash
+php console.php scaffold:crud turmas nome:string
+php console.php scaffold:crud matriculas nome:string turma_id:belongs_to=turmas
+```
+
+O model gerado carrega as turmas pelo metodo `turmas()`, o controller envia a
+lista para as telas de cadastro/edicao e o formulario gera um select Bootstrap
+5 com todas as opcoes. A tabela filha tambem recebe a chave estrangeira nos
+esquemas do banco.
 
 ## 3. Adicionar login
 

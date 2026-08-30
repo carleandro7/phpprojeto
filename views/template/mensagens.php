@@ -15,7 +15,7 @@ if ($lista === []) {
 ?>
 <div class="mensagens">
     <?php foreach ($lista as $mensagem): ?>
-        <div class="alerta alerta--<?= e($mensagem['tipo']) ?>">
+        <div class="alert alert-<?= e($mensagem['tipo'] === 'sucesso' ? 'success' : ($mensagem['tipo'] === 'erro' ? 'danger' : $mensagem['tipo'])) ?> alerta--<?= e($mensagem['tipo']) ?>">
             <?= e($mensagem['texto']) ?>
         </div>
     <?php endforeach ?>

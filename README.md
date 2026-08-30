@@ -29,6 +29,9 @@ Tipos aceitos: `string`, `text`, `integer`, `decimal`, `boolean`, `date`,
 `datetime` e `time`. O comando gera modelo, controller, views, teste e esquema para
 SQLite/MySQL. Ele nao sobrescreve arquivos existentes.
 
+Quando a tabela ja existe, o scaffold preserva os dados e adiciona as colunas
+que ainda estiverem ausentes.
+
 ### Autenticacao
 
 ```bash
@@ -70,4 +73,5 @@ php testes/executar.php
 ```
 
 Consulte [documentacao/Tutorial-Comandos.md](documentacao/Tutorial-Comandos.md)
-para exemplos detalhados.
+para um passo a passo ou a [Referencia de comandos](documentacao/Referencia-Comandos.md)
+para a lista completa de comandos disponiveis.

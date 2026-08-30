@@ -22,20 +22,24 @@ $nomeDoSite = Config::obter('app.nome', 'Framework MVC');
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= e($titulo !== '' ? "{$titulo} | {$nomeDoSite}" : $nomeDoSite) ?></title>
 
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="<?= asset('css/estilo.css') ?>">
 </head>
 <body>
 
     <?= parcial('template/cabecalho', ['nomeDoSite' => $nomeDoSite]) ?>
 
-    <main class="conteudo">
+    <main class="app-main">
+        <div class="container-fluid conteudo">
         <?= parcial('template/mensagens') ?>
 
         <?= $conteudo ?>
+        </div>
     </main>
 
     <?= parcial('template/rodape') ?>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="<?= asset('javascripts/app.js') ?>"></script>
 </body>
 </html>

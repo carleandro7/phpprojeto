@@ -6,6 +6,7 @@ if (PHP_SAPI !== 'cli') {
 
 require_once __DIR__ . '/nucleo/bootstrap.php';
 
+use Nucleo\Config;
 use Nucleo\Database;
 
 $comando = $argv[1] ?? '';
@@ -15,7 +16,7 @@ if ($comando === 'scaffold:crud') {
 } elseif ($comando === 'auth:install') {
     gerarAutenticacao();
 } else {
-    echo "Uso:\n  php console.php scaffold:crud tabela campo:tipo ...\n  php console.php auth:install\n";
+    echo "Uso:\n  php console.php scaffold:crud tabela campo:tipo ...\n  php console.php scaffold:crud filhos campo_id:belongs_to=tabela_pai\n  php console.php auth:install\n";
     exit($comando === '' ? 0 : 1);
 }
 
@@ -29,18 +30,26 @@ function gerarCrud(array $argumentos): void
     $campos = [];
     foreach (array_slice($argumentos, 1) as $definicao) {
         [$nome, $tipo] = array_pad(explode(':', strtolower($definicao), 2), 2, 'string');
+        $relacao = null;
+
+        if (str_starts_with($tipo, 'belongs_to=')) {
+            $relacao = substr($tipo, strlen('belongs_to='));
+            validarNome($relacao, 'tabela relacionada');
+            $tipo = 'integer';
+        }
+
         validarNome($nome, 'campo');
         if (in_array($nome, ['id', 'criado_em'], true) || !in_array($tipo, ['string', 'text', 'integer', 'decimal', 'boolean', 'date', 'datetime', 'time'], true)) {
             throw new InvalidArgumentException("Campo ou tipo invalido: {$definicao}");
         }
-        $campos[] = [$nome, $tipo];
+        $campos[] = [$nome, $tipo, $relacao];
     }
-    $singular = str_ends_with($tabela, 's') ? substr($tabela, 0, -1) : $tabela;
-    $classe = pascal($singular);
+    $classe = classeDaTabela($tabela);
     $recurso = pascal($tabela);
     $pasta = strtolower($recurso);
+    $metodosRelacoes = metodosRelacoesModelo($campos);
 
-    escrever(CAMINHO_MODELOS . "/{$classe}.php", "<?php\n\nnamespace Modelos;\n\nuse Nucleo\\Model;\n\nclass {$classe} extends Model\n{\n    protected string \$tabela = '{$tabela}';\n    protected array \$preenchiveis = [" . implode(', ', array_map(fn ($campo) => "'{$campo[0]}'", $campos)) . "];\n    protected string \$ordemPadrao = 'id DESC';\n}\n");
+    escrever(CAMINHO_MODELOS . "/{$classe}.php", "<?php\n\nnamespace Modelos;\n\nuse Nucleo\\Model;\n\nclass {$classe} extends Model\n{\n    protected string \$tabela = '{$tabela}';\n    protected array \$preenchiveis = [" . implode(', ', array_map(fn ($campo) => "'{$campo[0]}'", $campos)) . "];\n    protected string \$ordemPadrao = 'id DESC';\n\n{$metodosRelacoes}}\n");
     escrever(CAMINHO_CONTROLLERS . "/{$recurso}Controller.php", controllerGerado($classe, $recurso, $pasta, $campos));
     escrever(CAMINHO_VIEWS . "/{$pasta}/index.php", indexGerado($tabela, $campos));
     escrever(CAMINHO_VIEWS . "/{$pasta}/formulario.php", formularioGerado($tabela, $campos));
@@ -49,7 +58,55 @@ function gerarCrud(array $argumentos): void
     file_put_contents(CAMINHO_BANCO . '/esquema.sqlite.sql', "\n" . esquema($tabela, $campos, false), FILE_APPEND | LOCK_EX);
     file_put_contents(CAMINHO_BANCO . '/esquema.mysql.sql', "\n" . esquema($tabela, $campos, true), FILE_APPEND | LOCK_EX);
     Database::migrar();
+    sincronizarColunas($tabela, $campos);
     echo "CRUD criado: /{$pasta}\n";
+}
+
+function sincronizarColunas(string $tabela, array $campos): void
+{
+    $pdo = Database::conexao();
+    $driver = Config::obter('banco.driver', 'sqlite');
+    $existentes = [];
+
+    if ($driver === 'mysql') {
+        foreach ($pdo->query("SHOW COLUMNS FROM `{$tabela}`") as $coluna) {
+            $existentes[] = $coluna['Field'];
+        }
+    } else {
+        foreach ($pdo->query("PRAGMA table_info({$tabela})") as $coluna) {
+            $existentes[] = $coluna['name'];
+        }
+    }
+
+    foreach ($campos as [$nome, $tipo]) {
+        if (!in_array($nome, $existentes, true)) {
+            $definicao = $driver === 'mysql'
+                ? tipoSql($tipo, true)
+                : tipoSql($tipo, false);
+            $pdo->exec("ALTER TABLE {$tabela} ADD COLUMN {$nome} {$definicao} NULL");
+        }
+    }
+}
+
+function tipoSql(string $tipo, bool $mysql): string
+{
+    if ($mysql) {
+        return match ($tipo) {
+            'integer' => 'INT',
+            'decimal' => 'DECIMAL(12,2)',
+            'boolean' => 'TINYINT(1)',
+            'date' => 'DATE',
+            'datetime' => 'DATETIME',
+            'time' => 'TIME',
+            default => 'VARCHAR(255)',
+        };
+    }
+
+    return match ($tipo) {
+        'integer', 'boolean' => 'INTEGER',
+        'decimal' => 'REAL',
+        default => 'TEXT',
+    };
 }
 
 function validarNome(string $nome, string $tipo): void
@@ -62,6 +119,45 @@ function validarNome(string $nome, string $tipo): void
 function pascal(string $nome): string
 {
     return str_replace(' ', '', ucwords(str_replace('_', ' ', $nome)));
+}
+
+function classeDaTabela(string $tabela): string
+{
+    $singular = str_ends_with($tabela, 's') ? substr($tabela, 0, -1) : $tabela;
+
+    return pascal($singular);
+}
+
+function relacoesUnicas(array $campos): array
+{
+    $relacoes = [];
+
+    foreach ($campos as $campo) {
+        if (($campo[2] ?? null) !== null) {
+            $relacoes[$campo[2]] = $campo;
+        }
+    }
+
+    return array_values($relacoes);
+}
+
+function nomeMetodoRelacao(string $tabela): string
+{
+    return $tabela;
+}
+
+function metodosRelacoesModelo(array $campos): string
+{
+    $metodos = [];
+
+    foreach (relacoesUnicas($campos) as $campo) {
+        $tabelaRelacionada = $campo[2];
+        $classeRelacionada = classeDaTabela($tabelaRelacionada);
+        $metodo = nomeMetodoRelacao($tabelaRelacionada);
+        $metodos[] = "    public function {$metodo}(): array\n    {\n        return (new \\Modelos\\{$classeRelacionada}())->todos();\n    }";
+    }
+
+    return $metodos === [] ? '' : implode("\n\n", $metodos) . "\n";
 }
 
 function escrever(string $arquivo, string $conteudo): void
@@ -78,36 +174,91 @@ function escrever(string $arquivo, string $conteudo): void
 function controllerGerado(string $classe, string $recurso, string $pasta, array $campos): string
 {
     $dados = implode("\n            ", array_map(fn ($campo) => "'{$campo[0]}' => \$this->post('{$campo[0]}'),", $campos));
-    return "<?php\n\nnamespace Controllers;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Controller;\n\nclass {$recurso}Controller extends Controller\n{\n    private {$classe} \$modelo;\n\n    public function __construct()\n    {\n        \$this->modelo = new {$classe}();\n    }\n\n    public function index(): void\n    {\n        \$this->view('{$pasta}/index', ['titulo' => '{$recurso}', 'registros' => \$this->modelo->todos()]);\n    }\n\n    public function criar(): void\n    {\n        \$this->view('{$pasta}/formulario', ['titulo' => 'Novo {$classe}', 'registro' => null]);\n    }\n\n    public function salvar(): void\n    {\n        \$id = \$this->modelo->criar([\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} criado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n    public function ver(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/ver', ['titulo' => '{$classe}', 'registro' => \$registro]);\n    }\n\n    public function editar(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/formulario', ['titulo' => 'Editar {$classe}', 'registro' => \$registro]);\n    }\n\n    public function atualizar(string \$id): void\n    {\n        \$this->modelo->atualizar(\$id, [\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} atualizado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n    public function excluir(string \$id): void\n    {\n        if (!\$this->modelo->excluir(\$id)) { \$this->naoEncontrado(); }\n        \$this->mensagem('sucesso', '{$classe} excluido com sucesso.');\n        \$this->redirecionar('{$pasta}');\n    }\n}\n";
+    $relacoesView = '';
+
+    foreach (relacoesUnicas($campos) as $campo) {
+        $tabelaRelacionada = $campo[2];
+        $metodo = nomeMetodoRelacao($tabelaRelacionada);
+        $relacoesView .= "\n            '{$tabelaRelacionada}' => \$this->modelo->{$metodo}(),";
+    }
+
+    return "<?php\n\nnamespace Controllers;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Controller;\n\nclass {$recurso}Controller extends Controller\n{\n    private {$classe} \$modelo;\n\n    public function __construct()\n    {\n        \$this->modelo = new {$classe}();\n    }\n\n    public function index(): void\n    {\n        \$this->view('{$pasta}/index', ['titulo' => '{$recurso}', 'registros' => \$this->modelo->todos()]);\n    }\n\n    public function criar(): void\n    {\n        \$this->view('{$pasta}/formulario', [\n            'titulo' => 'Novo {$classe}',\n            'registro' => null,{$relacoesView}\n        ]);\n    }\n\n    public function salvar(): void\n    {\n        \$id = \$this->modelo->criar([\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} criado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n    public function ver(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/ver', ['titulo' => '{$classe}', 'registro' => \$registro]);\n    }\n\n    public function editar(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/formulario', [\n            'titulo' => 'Editar {$classe}',\n            'registro' => \$registro,{$relacoesView}\n        ]);\n    }\n\n    public function atualizar(string \$id): void\n    {\n        \$this->modelo->atualizar(\$id, [\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} atualizado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n    public function excluir(string \$id): void\n    {\n        if (!\$this->modelo->excluir(\$id)) { \$this->naoEncontrado(); }\n        \$this->mensagem('sucesso', '{$classe} excluido com sucesso.');\n        \$this->redirecionar('{$pasta}');\n    }\n}\n";
 }
 
 function indexGerado(string $tabela, array $campos): string
 {
     $cabecalhos = implode('', array_map(fn ($campo) => "        <th>{$campo[0]}</th>\n", $campos));
     $celulas = implode('', array_map(fn ($campo) => "            <td><?= e(\$registro['{$campo[0]}'] ?? '') ?></td>\n", $campos));
-    return "<h1>{$tabela}</h1>\n<a href=\"<?= url('{$tabela}/criar') ?>\">Novo registro</a>\n<table><thead><tr><th>ID</th>\n{$cabecalhos}</tr></thead><tbody>\n<?php foreach (\$registros as \$registro): ?>\n<tr><td><a href=\"<?= url('{$tabela}/ver/' . \$registro['id']) ?>\"><?= e(\$registro['id']) ?></a></td>\n{$celulas}</tr>\n<?php endforeach ?>\n</tbody></table>\n";
+        return "<div class=\"d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4\"><div><h1 class=\"h3 mb-1\">{$tabela}</h1><p class=\"text-secondary mb-0\">Gerencie os registros cadastrados.</p></div><a class=\"btn btn-primary\" href=\"<?= url('{$tabela}/criar') ?>\">Novo registro</a></div>\n<div class=\"card border-0 shadow-sm\"><div class=\"table-responsive\"><table class=\"table table-hover align-middle mb-0\"><thead class=\"table-light\"><tr><th>ID</th>\n{$cabecalhos}</tr></thead><tbody>\n<?php foreach (\$registros as \$registro): ?>\n<tr><td><a href=\"<?= url('{$tabela}/ver/' . \$registro['id']) ?>\"><?= e(\$registro['id']) ?></a></td>\n{$celulas}</tr>\n<?php endforeach ?>\n</tbody></table></div></div>\n";
 }
 
 function formularioGerado(string $tabela, array $campos): string
 {
-    $inputs = implode("\n", array_map(fn ($campo) => "    <label>{$campo[0]} <input type=\"" . match ($campo[1]) { 'integer', 'decimal' => 'number', 'date' => 'date', 'datetime' => 'datetime-local', 'time' => 'time', 'boolean' => 'checkbox', default => 'text' } . "\" name=\"{$campo[0]}\" value=\"<?= e(antigo('{$campo[0]}', \$registro['{$campo[0]}'] ?? '')) ?>\"></label>", $campos));
-    return "<h1><?= e(\$titulo) ?></h1>\n<form method=\"post\" action=\"<?= url('{$tabela}/' . (\$registro ? 'atualizar/' . \$registro['id'] : 'salvar')) ?>\">\n{$inputs}\n    <button type=\"submit\">Salvar</button>\n</form>\n";
+    $inputs = [];
+
+    foreach ($campos as $campo) {
+        [$nome, $tipo, $tabelaRelacionada] = array_pad($campo, 3, null);
+
+        if ($tabelaRelacionada !== null) {
+            $inputs[] = "    <div class=\"col-md-6\"><label class=\"form-label\" for=\"{$nome}\">{$nome}</label><select class=\"form-select\" id=\"{$nome}\" name=\"{$nome}\"><option value=\"\">Selecione...</option><?php \$valorSelecionado = antigo('{$nome}', \$registro['{$nome}'] ?? ''); ?><?php foreach ((\$" . $tabelaRelacionada . " ?? []) as \$opcao): ?><option value=\"<?= e(\$opcao['id']) ?>\" <?= (string) \$valorSelecionado === (string) \$opcao['id'] ? 'selected' : '' ?>><?= e(\$opcao['nome'] ?? \$opcao['descricao'] ?? ('#' . \$opcao['id'])) ?></option><?php endforeach ?></select></div>";
+            continue;
+        }
+
+        $tipoHtml = match ($tipo) {
+            'integer', 'decimal' => 'number',
+            'date' => 'date',
+            'datetime' => 'datetime-local',
+            'time' => 'time',
+            'boolean' => 'checkbox',
+            default => 'text',
+        };
+        $inputs[] = "    <div class=\"col-md-6\"><label class=\"form-label\" for=\"{$nome}\">{$nome}</label><input class=\"form-control\" id=\"{$nome}\" type=\"{$tipoHtml}\" name=\"{$nome}\" value=\"<?= e(antigo('{$nome}', \$registro['{$nome}'] ?? '')) ?>\"></div>";
+    }
+
+    return "<div class=\"mb-4\"><h1 class=\"h3 mb-1\"><?= e(\$titulo) ?></h1><p class=\"text-secondary mb-0\">Preencha os dados abaixo.</p></div>\n<form class=\"card border-0 shadow-sm p-4\" method=\"post\" action=\"<?= url('{$tabela}/' . (\$registro ? 'atualizar/' . \$registro['id'] : 'salvar')) ?>\"><div class=\"row g-3\">\n" . implode("\n", $inputs) . "\n</div><div class=\"d-flex gap-2 mt-4\"><button class=\"btn btn-primary\" type=\"submit\">Salvar</button><a class=\"btn btn-outline-secondary\" href=\"<?= url('{$tabela}') ?>\">Cancelar</a></div>\n</form>\n";
 }
 
 function verGerado(string $tabela, array $campos): string
 {
     $linhas = implode("\n", array_map(fn ($campo) => "<dt>{$campo[0]}</dt><dd><?= e(\$registro['{$campo[0]}'] ?? '') ?></dd>", $campos));
-    return "<h1>Registro</h1><dl>\n{$linhas}\n</dl><a href=\"<?= url('{$tabela}') ?>\">Voltar</a>\n";
+        return "<div class=\"d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4\"><h1 class=\"h3 mb-0\">Registro</h1><a class=\"btn btn-outline-secondary\" href=\"<?= url('{$tabela}') ?>\">Voltar</a></div><div class=\"card border-0 shadow-sm\"><dl class=\"row g-0 mb-0 p-4\">\n{$linhas}\n</dl></div>\n";
 }
 
 function testeModeloGerado(string $tabela, string $classe, array $campos): string
 {
+    $relacoes = relacoesUnicas($campos);
     $colunas = implode(",\n            ", array_map(fn ($campo) => "{$campo[0]} " . tipoSqlTeste($campo[1]), $campos));
-    $dados = implode(",\n            ", array_map(fn ($campo) => "'{$campo[0]}' => " . var_export(valorTeste($campo[1]), true), $campos));
-    $campo = $campos[0][0];
-    $valorAtualizado = var_export(valorTeste($campos[0][1], true), true);
+    $chaves = array_map(fn ($campo) => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)", array_filter($campos, fn ($campo) => ($campo[2] ?? null) !== null));
+    $definicoes = implode(",\n            ", array_merge(array_map(fn ($campo) => "{$campo[0]} " . tipoSqlTeste($campo[1]), $campos), $chaves));
+    $dados = implode(",\n            ", array_map(function ($campo) {
+        $valor = ($campo[2] ?? null) !== null
+            ? "\$this->idsRelacoes['{$campo[0]}']"
+            : var_export(valorTeste($campo[1]), true);
 
-    return "<?php\n\nnamespace Testes\\Modelos;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Database;\nuse Testes\\Suporte\\TesteBase;\n\nclass {$classe}Test extends TesteBase\n{\n    private {$classe} \$modelo;\n\n    public function preparar(): void\n    {\n        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabela} (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            {$colunas}\n        )\");\n        Database::conexao()->exec('DELETE FROM {$tabela}');\n        \$this->modelo = new {$classe}();\n    }\n\n    public function testeExecutaCrudCompleto(): void\n    {\n        \$dados = [\n            {$dados}\n        ];\n        \$id = \$this->modelo->criar(\$dados);\n        \$registro = \$this->modelo->buscar(\$id);\n\n        \$this->assertVerdadeiro(\$id > 0);\n        \$this->assertIgual(\$dados['{$campo}'], \$registro['{$campo}']);\n        \$this->assertIgual(1, \$this->modelo->contar());\n\n        \$this->assertVerdadeiro(\$this->modelo->atualizar(\$id, ['{$campo}' => {$valorAtualizado}]));\n        \$this->assertIgual({$valorAtualizado}, \$this->modelo->buscar(\$id)['{$campo}']);\n        \$this->assertVerdadeiro(\$this->modelo->excluir(\$id));\n        \$this->assertNulo(\$this->modelo->buscar(\$id));\n    }\n}\n";
+        return "'{$campo[0]}' => {$valor}";
+    }, $campos));
+    $campo = $campos[0][0];
+    $valorAtualizado = ($campos[0][2] ?? null) !== null
+        ? "\$this->idsRelacoesAtualizadas['{$campo}']"
+        : var_export(valorTeste($campos[0][1], true), true);
+    $prepararRelacoes = '';
+    $limparRelacoes = '';
+    $idsRelacoes = '';
+
+    foreach ($relacoes as $relacao) {
+        $tabelaRelacionada = $relacao[2];
+        $prepararRelacoes .= "        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabelaRelacionada} (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NULL)\");\n";
+        $limparRelacoes .= "        Database::conexao()->exec('DELETE FROM {$tabelaRelacionada}');\n";
+        $idsRelacoes .= "        Database::conexao()->exec(\"INSERT INTO {$tabelaRelacionada} (nome) VALUES ('Opcao 1'), ('Opcao 2')\");\n        \$this->idsRelacoes['{$relacao[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaRelacionada} ORDER BY id ASC LIMIT 1')->fetchColumn();\n        \$this->idsRelacoesAtualizadas['{$relacao[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaRelacionada} ORDER BY id DESC LIMIT 1')->fetchColumn();\n";
+    }
+
+    $assertRelacoes = '';
+    foreach ($relacoes as $relacao) {
+        $tabelaRelacionada = $relacao[2];
+        $assertRelacoes .= "        \$opcoes = \$this->modelo->" . nomeMetodoRelacao($tabelaRelacionada) . "();\n        \$this->assertTotal(2, \$opcoes);\n        \$this->assertVerdadeiro(in_array(\$this->idsRelacoes['{$relacao[0]}'], array_column(\$opcoes, 'id'), true));\n";
+    }
+
+    return "<?php\n\nnamespace Testes\\Modelos;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Database;\nuse Testes\\Suporte\\TesteBase;\n\nclass {$classe}Test extends TesteBase\n{\n    private {$classe} \$modelo;\n    private array \$idsRelacoes = [];\n    private array \$idsRelacoesAtualizadas = [];\n\n    public function preparar(): void\n    {\n{$prepararRelacoes}        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabela} (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            {$definicoes}\n        )\");\n        Database::conexao()->exec('DELETE FROM {$tabela}');\n{$limparRelacoes}{$idsRelacoes}        \$this->modelo = new {$classe}();\n    }\n\n    public function testeExecutaCrudCompleto(): void\n    {\n        \$dados = [\n            {$dados}\n        ];\n{$assertRelacoes}        \$id = \$this->modelo->criar(\$dados);\n        \$registro = \$this->modelo->buscar(\$id);\n\n        \$this->assertVerdadeiro(\$id > 0);\n        \$this->assertIgual(\$dados['{$campo}'], \$registro['{$campo}']);\n        \$this->assertIgual(1, \$this->modelo->contar());\n\n        \$this->assertVerdadeiro(\$this->modelo->atualizar(\$id, ['{$campo}' => {$valorAtualizado}]));\n        \$this->assertIgual({$valorAtualizado}, \$this->modelo->buscar(\$id)['{$campo}']);\n        \$this->assertVerdadeiro(\$this->modelo->excluir(\$id));\n        \$this->assertNulo(\$this->modelo->buscar(\$id));\n    }\n}\n";
 }
 
 function tipoSqlTeste(string $tipo): string
@@ -134,8 +285,11 @@ function valorTeste(string $tipo, bool $atualizado = false): mixed
 
 function esquema(string $tabela, array $campos, bool $mysql): string
 {
-    $colunas = implode(",\n    ", array_map(fn ($campo) => "{$campo[0]} " . ($mysql ? match ($campo[1]) { 'integer' => 'INT', 'decimal' => 'DECIMAL(12,2)', 'boolean' => 'TINYINT(1)', 'date' => 'DATE', 'datetime' => 'DATETIME', 'time' => 'TIME', default => 'VARCHAR(255)' } : match ($campo[1]) { 'integer' => 'INTEGER', 'decimal' => 'REAL', 'boolean' => 'INTEGER', default => 'TEXT' }) . ' NULL', $campos));
-    return $mysql ? "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INT AUTO_INCREMENT PRIMARY KEY,\n    {$colunas}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n" : "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    {$colunas}\n);\n";
+    $colunas = array_map(fn ($campo) => "{$campo[0]} " . tipoSql($campo[1], $mysql) . ' NULL', $campos);
+    $chaves = array_map(fn ($campo) => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)", array_filter($campos, fn ($campo) => ($campo[2] ?? null) !== null));
+    $definicoes = implode(",\n    ", array_merge($colunas, $chaves));
+
+    return $mysql ? "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INT AUTO_INCREMENT PRIMARY KEY,\n    {$definicoes}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n" : "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    {$definicoes}\n);\n";
 }
 
 function gerarAutenticacao(): void
@@ -194,8 +348,8 @@ class AuthController extends Controller
     }
 }
 PHP);
-    escrever(CAMINHO_VIEWS . '/auth/login.php', "<h1>Entrar</h1>\n<form method=\"post\" action=\"<?= url('auth/login') ?>\"><label>E-mail <input type=\"email\" name=\"email\" required></label><label>Senha <input type=\"password\" name=\"senha\" required></label><button type=\"submit\">Entrar</button></form>\n<p><a href=\"<?= url('auth/registrar') ?>\">Criar uma conta</a></p>\n");
-    escrever(CAMINHO_VIEWS . '/auth/registrar.php', "<h1>Criar conta</h1>\n<form method=\"post\" action=\"<?= url('auth/registrar') ?>\"><label>Nome <input type=\"text\" name=\"nome\" required></label><label>E-mail <input type=\"email\" name=\"email\" required></label><label>Senha <input type=\"password\" name=\"senha\" minlength=\"6\" required></label><button type=\"submit\">Criar conta</button></form>\n");
+    escrever(CAMINHO_VIEWS . '/auth/login.php', "<div class=\"row justify-content-center\"><div class=\"col-12 col-md-7 col-lg-5\"><div class=\"card border-0 shadow-sm p-4\"><h1 class=\"h3 mb-4\">Entrar</h1><form method=\"post\" action=\"<?= url('auth/login') ?>\"><div class=\"mb-3\"><label class=\"form-label\" for=\"email\">E-mail</label><input class=\"form-control\" id=\"email\" type=\"email\" name=\"email\" required></div><div class=\"mb-4\"><label class=\"form-label\" for=\"senha\">Senha</label><input class=\"form-control\" id=\"senha\" type=\"password\" name=\"senha\" required></div><button class=\"btn btn-primary w-100\" type=\"submit\">Entrar</button></form><p class=\"text-center mt-4 mb-0\"><a href=\"<?= url('auth/registrar') ?>\">Criar uma conta</a></p></div></div></div>\n");
+    escrever(CAMINHO_VIEWS . '/auth/registrar.php', "<div class=\"row justify-content-center\"><div class=\"col-12 col-md-7 col-lg-5\"><div class=\"card border-0 shadow-sm p-4\"><h1 class=\"h3 mb-4\">Criar conta</h1><form method=\"post\" action=\"<?= url('auth/registrar') ?>\"><div class=\"mb-3\"><label class=\"form-label\" for=\"nome\">Nome</label><input class=\"form-control\" id=\"nome\" type=\"text\" name=\"nome\" required></div><div class=\"mb-3\"><label class=\"form-label\" for=\"email\">E-mail</label><input class=\"form-control\" id=\"email\" type=\"email\" name=\"email\" required></div><div class=\"mb-4\"><label class=\"form-label\" for=\"senha\">Senha</label><input class=\"form-control\" id=\"senha\" type=\"password\" name=\"senha\" minlength=\"6\" required></div><button class=\"btn btn-primary w-100\" type=\"submit\">Criar conta</button></form></div></div></div>\n");
     $sqlite = "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, email TEXT NOT NULL UNIQUE, senha TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);\n";
     $mysql = "CREATE TABLE IF NOT EXISTS usuarios (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(100) NOT NULL, email VARCHAR(150) NOT NULL UNIQUE, senha VARCHAR(255) NOT NULL, criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n";
     file_put_contents(CAMINHO_BANCO . '/esquema.sqlite.sql', "\n{$sqlite}", FILE_APPEND | LOCK_EX);

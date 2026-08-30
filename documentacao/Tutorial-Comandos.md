@@ -43,6 +43,7 @@ O comando:
 - cria `controllers/ProdutosController.php`;
 - cria as views em `views/produtos/`;
 - cria o teste `testes/modelos/ProdutoTest.php`;
+- cria o teste de controller `testes/controllers/ProdutosControllerTest.php`;
 - adiciona a tabela aos esquemas SQLite e MySQL;
 - executa o esquema do driver configurado.
 
@@ -104,9 +105,10 @@ $produto->excluir($id);
 Use o modelo para validacoes e consultas especificas. Use o controller para
 receber dados e escolher a view. Use as views somente para HTML.
 
-O teste gerado usa o banco SQLite em memoria e verifica o CRUD basico do
-modelo: criar, buscar, contar, atualizar e excluir. Rode somente esse teste
-com o filtro:
+Os testes gerados usam o banco SQLite em memoria. O teste de model verifica
+criar, buscar, contar, atualizar e excluir; o teste de controller verifica as
+rotas de listagem, cadastro, visualizacao, edicao e exclusao. Rode somente os
+testes do recurso com o filtro:
 
 ```bash
 php testes/executar.php ProdutoTest
@@ -129,6 +131,24 @@ O model gerado carrega as turmas pelo metodo `turmas()`, o controller envia a
 lista para as telas de cadastro/edicao e o formulario gera um select Bootstrap
 5 com todas as opcoes. A tabela filha tambem recebe a chave estrangeira nos
 esquemas do banco.
+
+### Gerar relatorio PDF
+
+Depois de criar uma tabela e cadastrar registros, gere um PDF pelo terminal:
+
+```bash
+php console.php relatorio:pdf produtos
+```
+
+Tambem e possivel informar o model e o caminho do arquivo:
+
+```bash
+php console.php relatorio:pdf Produto relatorios/produtos.pdf
+```
+
+O caminho relativo parte da raiz do projeto. Sem um caminho, o arquivo vai para
+`relatorios/{tabela}.pdf`. O relatorio inclui as colunas da tabela, a paginação
+e todos os registros encontrados.
 
 ## 3. Adicionar login
 

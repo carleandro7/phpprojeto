@@ -26,8 +26,8 @@ php console.php scaffold:crud tabela campo:tipo campo2:tipo
 ```
 
 Tipos aceitos: `string`, `text`, `integer`, `decimal`, `boolean`, `date`,
-`datetime` e `time`. O comando gera modelo, controller, views, teste e esquema para
-SQLite/MySQL. Ele nao sobrescreve arquivos existentes.
+`datetime` e `time`. O comando gera modelo, controller, views, testes de model e
+controller e esquema para SQLite/MySQL. Ele nao sobrescreve arquivos existentes.
 
 Quando a tabela ja existe, o scaffold preserva os dados e adiciona as colunas
 que ainda estiverem ausentes.
@@ -61,6 +61,18 @@ public function index(): void
     $this->view('relatorios/index', ['titulo' => 'Relatorios']);
 }
 ```
+
+## Relatorio PDF
+
+Gere um relatorio com todos os registros de um model ou tabela:
+
+```bash
+php console.php relatorio:pdf produtos
+php console.php relatorio:pdf Produto relatorios/produtos.pdf
+```
+
+Sem um caminho, o arquivo e salvo em `relatorios/{tabela}.pdf`. O gerador e
+nativo do framework, pagina os registros e nao exige Composer.
 
 ## Estrutura
 

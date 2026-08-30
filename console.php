@@ -8,6 +8,7 @@ require_once __DIR__ . '/nucleo/bootstrap.php';
 
 use Nucleo\Config;
 use Nucleo\Database;
+use Nucleo\RelatorioPdf;
 
 $comando = $argv[1] ?? '';
 
@@ -15,8 +16,11 @@ if ($comando === 'scaffold:crud') {
     gerarCrud(array_slice($argv, 2));
 } elseif ($comando === 'auth:install') {
     gerarAutenticacao(array_slice($argv, 2));
+} elseif ($comando === 'relatorio:pdf') {
+    gerarRelatorioPdf(array_slice($argv, 2));
 } else {
     echo "Uso:\n  php console.php scaffold:crud tabela campo:tipo ...\n  php console.php scaffold:crud filhos campo_id:belongs_to=tabela_pai\n  php console.php auth:install [Modelo]\n";
+    echo "  php console.php relatorio:pdf modelo|tabela [arquivo.pdf]\n";
     exit($comando === '' ? 0 : 1);
 }
 
@@ -55,6 +59,7 @@ function gerarCrud(array $argumentos): void
     escrever(CAMINHO_VIEWS . "/{$pasta}/formulario.php", formularioGerado($tabela, $campos));
     escrever(CAMINHO_VIEWS . "/{$pasta}/ver.php", verGerado($tabela, $campos));
     escrever(CAMINHO_RAIZ . "/testes/modelos/{$classe}Test.php", testeModeloGerado($tabela, $classe, $campos));
+    escrever(CAMINHO_RAIZ . "/testes/controllers/{$recurso}ControllerTest.php", testeControllerGerado($tabela, $classe, $recurso, $pasta, $campos));
     file_put_contents(CAMINHO_BANCO . '/esquema.sqlite.sql', "\n" . esquema($tabela, $campos, false), FILE_APPEND | LOCK_EX);
     file_put_contents(CAMINHO_BANCO . '/esquema.mysql.sql', "\n" . esquema($tabela, $campos, true), FILE_APPEND | LOCK_EX);
     Database::migrar();
@@ -279,6 +284,46 @@ function tipoSqlTeste(string $tipo): string
     } . ' NULL';
 }
 
+function testeControllerGerado(string $tabela, string $classe, string $recurso, string $pasta, array $campos): string
+{
+    $relacoes = relacoesUnicas($campos);
+    $chaves = array_map(fn ($campo) => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)", array_filter($campos, fn ($campo) => ($campo[2] ?? null) !== null));
+    $definicoes = implode(",\n            ", array_merge(array_map(fn ($campo) => "{$campo[0]} " . tipoSqlTeste($campo[1]), $campos), $chaves));
+    $dados = implode(",\n            ", array_map(function ($campo) {
+        $valor = ($campo[2] ?? null) !== null
+            ? "\$this->idsRelacoes['{$campo[0]}']"
+            : var_export(valorTeste($campo[1]), true);
+
+        return "'{$campo[0]}' => {$valor}";
+    }, $campos));
+    $dadosAtualizados = implode(",\n            ", array_map(function ($campo) {
+        $valor = ($campo[2] ?? null) !== null
+            ? "\$this->idsRelacoesAtualizadas['{$campo[0]}']"
+            : var_export(valorTeste($campo[1], true), true);
+
+        return "'{$campo[0]}' => {$valor}";
+    }, $campos));
+    $campoPrincipal = $campos[0][0];
+    $valorInicial = ($campos[0][2] ?? null) !== null
+        ? "\$this->idsRelacoes['{$campoPrincipal}']"
+        : var_export(valorTeste($campos[0][1]), true);
+    $valorAtualizado = ($campos[0][2] ?? null) !== null
+        ? "\$this->idsRelacoesAtualizadas['{$campoPrincipal}']"
+        : var_export(valorTeste($campos[0][1], true), true);
+    $prepararRelacoes = '';
+    $limparRelacoes = '';
+    $idsRelacoes = '';
+
+    foreach ($relacoes as $relacao) {
+        $tabelaRelacionada = $relacao[2];
+        $prepararRelacoes .= "        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabelaRelacionada} (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NULL)\");\n";
+        $limparRelacoes .= "        \$this->limparTabela('{$tabelaRelacionada}');\n";
+        $idsRelacoes .= "        Database::conexao()->exec(\"INSERT INTO {$tabelaRelacionada} (nome) VALUES ('Opcao 1'), ('Opcao 2')\");\n        \$this->idsRelacoes['{$relacao[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaRelacionada} ORDER BY id ASC LIMIT 1')->fetchColumn();\n        \$this->idsRelacoesAtualizadas['{$relacao[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaRelacionada} ORDER BY id DESC LIMIT 1')->fetchColumn();\n";
+    }
+
+    return "<?php\n\nnamespace Testes\\Controllers;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Database;\nuse Testes\\Suporte\\TesteBase;\n\nclass {$recurso}ControllerTest extends TesteBase\n{\n    private {$classe} \$modelo;\n    private array \$idsRelacoes = [];\n    private array \$idsRelacoesAtualizadas = [];\n\n    public function preparar(): void\n    {\n{$prepararRelacoes}        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabela} (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            {$definicoes}\n        )\");\n        \$this->limparTabela('{$tabela}');\n{$limparRelacoes}{$idsRelacoes}        \$this->modelo = new {$classe}();\n    }\n\n    public function testeExecutaRotasDoCrud(): void\n    {\n        \$lista = \$this->requisitar('{$pasta}');\n        \$this->assertIgual(200, \$lista->status);\n        \$this->assertContem('{$campoPrincipal}', \$lista->html);\n\n        \$formulario = \$this->requisitar('{$pasta}/criar');\n        \$this->assertIgual(200, \$formulario->status);\n        \$this->assertContem('Salvar', \$formulario->html);\n\n        \$salvar = \$this->postar('{$pasta}/salvar', [\n            {$dados}\n        ]);\n        \$this->assertVerdadeiro(\$salvar->redirecionouPara('{$pasta}/ver/1'));\n\n        \$registro = \$this->modelo->todos()[0] ?? null;\n        \$this->assertNaoNulo(\$registro);\n        \$id = (int) \$registro['id'];\n        \$this->assertIgual({$valorInicial}, \$registro['{$campoPrincipal}']);\n\n        \$ver = \$this->requisitar('{$pasta}/ver/' . \$id);\n        \$this->assertIgual(200, \$ver->status);\n        \$this->assertContem((string) \$registro['{$campoPrincipal}'], \$ver->html);\n\n        \$editar = \$this->requisitar('{$pasta}/editar/' . \$id);\n        \$this->assertIgual(200, \$editar->status);\n        \$this->assertContem('Editar {$classe}', \$editar->html);\n\n        \$atualizar = \$this->postar('{$pasta}/atualizar/' . \$id, [\n            {$dadosAtualizados}\n        ]);\n        \$this->assertVerdadeiro(\$atualizar->redirecionouPara('{$pasta}/ver/' . \$id));\n        \$registroAtualizado = \$this->modelo->buscar(\$id);\n        \$this->assertIgual({$valorAtualizado}, \$registroAtualizado['{$campoPrincipal}']);\n\n        \$excluir = \$this->requisitar('{$pasta}/excluir/' . \$id);\n        \$this->assertVerdadeiro(\$excluir->redirecionouPara('{$pasta}'));\n        \$this->assertNulo(\$this->modelo->buscar(\$id));\n    }\n}\n";
+}
+
 function valorTeste(string $tipo, bool $atualizado = false): mixed
 {
     return match ($tipo) {
@@ -299,6 +344,73 @@ function esquema(string $tabela, array $campos, bool $mysql): string
     $definicoes = implode(",\n    ", array_merge($colunas, $chaves));
 
     return $mysql ? "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INT AUTO_INCREMENT PRIMARY KEY,\n    {$definicoes}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n" : "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    {$definicoes}\n);\n";
+}
+
+function gerarRelatorioPdf(array $argumentos): void
+{
+    if (count($argumentos) < 1 || count($argumentos) > 2) {
+        throw new InvalidArgumentException('Uso: php console.php relatorio:pdf modelo|tabela [arquivo.pdf]');
+    }
+
+    $modelo = resolverModeloRelatorio($argumentos[0]);
+    $registros = $modelo['instancia']->todos();
+    $colunas = $registros === [] ? colunasDaTabela($modelo['tabela']) : array_keys($registros[0]);
+    $arquivo = caminhoRelatorioPdf($argumentos[1] ?? "relatorios/{$modelo['tabela']}.pdf");
+
+    RelatorioPdf::gerar("Relatorio de {$modelo['tabela']}", $colunas, $registros, $arquivo);
+
+    echo "Relatorio PDF criado: {$arquivo}\n";
+}
+
+function resolverModeloRelatorio(string $alvo): array
+{
+    if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $alvo)) {
+        throw new InvalidArgumentException("Modelo ou tabela invalido: {$alvo}");
+    }
+
+    $candidatos = array_unique([
+        pascal($alvo),
+        classeDaTabela(strtolower($alvo)),
+    ]);
+
+    foreach ($candidatos as $classe) {
+        $arquivo = CAMINHO_MODELOS . "/{$classe}.php";
+
+        if (!is_file($arquivo)) {
+            continue;
+        }
+
+        $nomeCompleto = "Modelos\\{$classe}";
+        if (!class_exists($nomeCompleto)) {
+            throw new RuntimeException("Nao foi possivel carregar o modelo: {$nomeCompleto}");
+        }
+
+        $instancia = new $nomeCompleto();
+        if (!$instancia instanceof \Nucleo\Model) {
+            throw new RuntimeException("O modelo {$nomeCompleto} deve herdar de Nucleo\\Model.");
+        }
+
+        return [
+            'classe' => $classe,
+            'tabela' => $instancia->tabela(),
+            'instancia' => $instancia,
+        ];
+    }
+
+    throw new RuntimeException("Modelo nao encontrado: {$alvo}. Gere-o antes com scaffold:crud.");
+}
+
+function caminhoRelatorioPdf(string $caminho): string
+{
+    if ($caminho === '') {
+        throw new InvalidArgumentException('O arquivo do relatorio nao pode ser vazio.');
+    }
+
+    if ($caminho[0] === '/') {
+        return $caminho;
+    }
+
+    return CAMINHO_RAIZ . '/' . ltrim($caminho, '/');
 }
 
 function gerarAutenticacao(array $argumentos): void

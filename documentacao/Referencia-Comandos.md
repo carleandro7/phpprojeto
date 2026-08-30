@@ -14,6 +14,7 @@ Mostra os comandos de geracao disponiveis:
 ```text
 php console.php scaffold:crud tabela campo:tipo ...
 php console.php auth:install [Modelo]
+php console.php relatorio:pdf modelo|tabela [arquivo.pdf]
 ```
 
 ## 2. Preparar o banco
@@ -49,6 +50,7 @@ O comando gera:
 ```text
 modelos/Produto.php
 testes/modelos/ProdutoTest.php
+testes/controllers/ProdutosControllerTest.php
 controllers/ProdutosController.php
 views/produtos/index.php
 views/produtos/formulario.php
@@ -143,7 +145,18 @@ Para o exemplo `matriculas`, as rotas geradas sao:
 As telas geradas ja usam Bootstrap 5, com cards, grids, rows, colunas,
 formularios e tabelas responsivas.
 
-## 4. Gerar autenticacao
+## 4. Gerar relatorio PDF
+
+```bash
+php console.php relatorio:pdf produtos
+php console.php relatorio:pdf Produto relatorios/produtos.pdf
+```
+
+O comando aceita o nome da tabela ou do model. Sem o segundo argumento, salva
+em `relatorios/{tabela}.pdf`; caminhos relativos partem da raiz do projeto.
+O arquivo inclui as colunas da tabela e todos os registros encontrados.
+
+## 5. Gerar autenticacao
 
 ```bash
 php console.php auth:install [Modelo]
@@ -202,7 +215,7 @@ Depois de executar o comando:
 O comando nao deve ser executado novamente se os arquivos de autenticacao ja
 existirem, pois o gerador nao sobrescreve arquivos.
 
-## 5. Executar todos os testes
+## 6. Executar todos os testes
 
 ```bash
 php testes/executar.php
@@ -210,10 +223,10 @@ php testes/executar.php
 
 Executa todos os arquivos terminados em `Test.php` dentro de `testes/`.
 
-O teste gerado pelo scaffold verifica o CRUD basico do model: criar, buscar,
-contar, atualizar e excluir.
+Os testes gerados pelo scaffold verificam o CRUD basico do model e as rotas do
+controller.
 
-## 6. Executar um teste especifico
+## 7. Executar um teste especifico
 
 ```bash
 php testes/executar.php ProdutoTest
@@ -227,7 +240,7 @@ php testes/executar.php testeMontaUrlInterna
 php testes/executar.php ProdutoTest::testeExecutaCrudCompleto
 ```
 
-## 7. Iniciar o servidor PHP
+## 8. Iniciar o servidor PHP
 
 ```bash
 php -S localhost:8000 roteador.php
@@ -242,7 +255,7 @@ http://localhost:8000
 O arquivo `roteador.php` permite que as rotas do framework funcionem no
 servidor embutido do PHP.
 
-## 8. Validar a sintaxe de um arquivo PHP
+## 9. Validar a sintaxe de um arquivo PHP
 
 ```bash
 php -l console.php
@@ -255,7 +268,7 @@ Para validar todos os arquivos PHP:
 find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
 ```
 
-## 9. Verificar o diff do Git
+## 10. Verificar o diff do Git
 
 Este comando nao pertence ao framework, mas ajuda antes de criar um commit:
 
@@ -265,7 +278,7 @@ git status --short
 git diff --stat
 ```
 
-## 10. Fluxo completo para um projeto novo
+## 11. Fluxo completo para um projeto novo
 
 ```bash
 php instalar.php

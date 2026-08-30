@@ -147,6 +147,18 @@ formularios e tabelas responsivas.
 
 ## 4. Gerar relatorio PDF
 
+O scaffold tambem gera a rota web protegida:
+
+```text
+/produtos/relatorio
+/produtos/relatorio?nome=teclado&estoque=1
+```
+
+Essa rota passa pelo controller, exige autenticacao e filtra os campos
+informados na query string.
+
+Para gerar um arquivo offline:
+
 ```bash
 php console.php relatorio:pdf produtos
 php console.php relatorio:pdf Produto relatorios/produtos.pdf
@@ -154,7 +166,9 @@ php console.php relatorio:pdf Produto relatorios/produtos.pdf
 
 O comando aceita o nome da tabela ou do model. Sem o segundo argumento, salva
 em `relatorios/{tabela}.pdf`; caminhos relativos partem da raiz do projeto.
-O arquivo inclui as colunas da tabela e todos os registros encontrados.
+O arquivo inclui as colunas da tabela e todos os registros encontrados. Para
+dados protegidos na web, use a rota do controller em vez de apontar para esse
+arquivo diretamente.
 
 ## 5. Gerar autenticacao
 

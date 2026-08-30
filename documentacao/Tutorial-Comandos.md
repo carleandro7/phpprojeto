@@ -134,7 +134,18 @@ esquemas do banco.
 
 ### Gerar relatorio PDF
 
-Depois de criar uma tabela e cadastrar registros, gere um PDF pelo terminal:
+O scaffold ja cria a rota protegida do relatorio e coloca o link na listagem.
+Por exemplo, para `produtos`:
+
+```text
+/produtos/relatorio
+/produtos/relatorio?nome=teclado&estoque=1
+```
+
+A acao passa pelo controller, exige autenticacao e pode ser personalizada para
+regras de autorizacao e filtros adicionais.
+
+Para gerar um arquivo offline pelo terminal:
 
 ```bash
 php console.php relatorio:pdf produtos
@@ -147,8 +158,8 @@ php console.php relatorio:pdf Produto relatorios/produtos.pdf
 ```
 
 O caminho relativo parte da raiz do projeto. Sem um caminho, o arquivo vai para
-`relatorios/{tabela}.pdf`. O relatorio inclui as colunas da tabela, a paginação
-e todos os registros encontrados.
+`relatorios/{tabela}.pdf`. Esse arquivo e destinado a uso offline; para a
+interface web, use a rota do controller para manter a autenticacao.
 
 ## 3. Adicionar login
 

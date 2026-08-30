@@ -54,7 +54,7 @@ function gerarCrud(array $argumentos): void
     $metodosRelacoes = metodosRelacoesModelo($campos);
 
     escrever(CAMINHO_MODELOS . "/{$classe}.php", "<?php\n\nnamespace Modelos;\n\nuse Nucleo\\Model;\n\nclass {$classe} extends Model\n{\n    protected string \$tabela = '{$tabela}';\n    protected array \$preenchiveis = [" . implode(', ', array_map(fn ($campo) => "'{$campo[0]}'", $campos)) . "];\n    protected string \$ordemPadrao = 'id DESC';\n\n{$metodosRelacoes}}\n");
-    escrever(CAMINHO_CONTROLLERS . "/{$recurso}Controller.php", controllerGerado($classe, $recurso, $pasta, $campos));
+    escrever(CAMINHO_CONTROLLERS . "/{$recurso}Controller.php", controllerGerado($tabela, $classe, $recurso, $pasta, $campos));
     escrever(CAMINHO_VIEWS . "/{$pasta}/index.php", indexGerado($tabela, $campos));
     escrever(CAMINHO_VIEWS . "/{$pasta}/formulario.php", formularioGerado($tabela, $campos));
     escrever(CAMINHO_VIEWS . "/{$pasta}/ver.php", verGerado($tabela, $campos));
@@ -185,7 +185,7 @@ function escrever(string $arquivo, string $conteudo): void
     file_put_contents($arquivo, $conteudo . "\n", LOCK_EX);
 }
 
-function controllerGerado(string $classe, string $recurso, string $pasta, array $campos): string
+function controllerGerado(string $tabela, string $classe, string $recurso, string $pasta, array $campos): string
 {
     $dados = implode("\n            ", array_map(fn ($campo) => "'{$campo[0]}' => \$this->post('{$campo[0]}'),", $campos));
     $relacoesView = '';
@@ -196,14 +196,30 @@ function controllerGerado(string $classe, string $recurso, string $pasta, array 
         $relacoesView .= "\n            '{$tabelaRelacionada}' => \$this->modelo->{$metodo}(),";
     }
 
-    return "<?php\n\nnamespace Controllers;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Controller;\n\nclass {$recurso}Controller extends Controller\n{\n    private {$classe} \$modelo;\n\n    public function __construct()\n    {\n        \$this->modelo = new {$classe}();\n    }\n\n    public function index(): void\n    {\n        \$this->view('{$pasta}/index', ['titulo' => '{$recurso}', 'registros' => \$this->modelo->todos()]);\n    }\n\n    public function criar(): void\n    {\n        \$this->view('{$pasta}/formulario', [\n            'titulo' => 'Novo {$classe}',\n            'registro' => null,{$relacoesView}\n        ]);\n    }\n\n    public function salvar(): void\n    {\n        \$id = \$this->modelo->criar([\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} criado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n    public function ver(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/ver', ['titulo' => '{$classe}', 'registro' => \$registro]);\n    }\n\n    public function editar(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/formulario', [\n            'titulo' => 'Editar {$classe}',\n            'registro' => \$registro,{$relacoesView}\n        ]);\n    }\n\n    public function atualizar(string \$id): void\n    {\n        \$this->modelo->atualizar(\$id, [\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} atualizado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n    public function excluir(string \$id): void\n    {\n        if (!\$this->modelo->excluir(\$id)) { \$this->naoEncontrado(); }\n        \$this->mensagem('sucesso', '{$classe} excluido com sucesso.');\n        \$this->redirecionar('{$pasta}');\n    }\n}\n";
+    $colunasRelatorio = implode(', ', array_merge(
+        ["'id'"],
+        array_map(fn ($campo) => "'{$campo[0]}'", $campos)
+    ));
+    $filtrosRelatorio = '';
+
+    foreach (array_merge([['id']], $campos) as $campo) {
+        $filtrosRelatorio .= "        \$filtro = \$this->get('{$campo[0]}');\n"
+            . "        if (is_scalar(\$filtro) && (string) \$filtro !== '') {\n"
+            . "            \$condicoes[] = '{$campo[0]} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;\n"
+            . "            \$parametros[] = Sql::comoLike((string) \$filtro);\n"
+            . "        }\n";
+    }
+
+    $metodoRelatorio = "    public function relatorio(): void\n    {\n        \$this->exigirAutenticacao();\n\n        \$condicoes = [];\n        \$parametros = [];\n{$filtrosRelatorio}\n        \$sql = 'SELECT * FROM ' . \$this->modelo->tabela();\n        if (\$condicoes !== []) {\n            \$sql .= ' WHERE ' . implode(' AND ', \$condicoes);\n        }\n        \$sql .= ' ORDER BY id DESC';\n        \$registros = \$this->modelo->consultar(\$sql, \$parametros);\n        \$pdf = RelatorioPdf::conteudo('Relatorio de {$tabela}', [{$colunasRelatorio}], \$registros);\n        \$this->pdf(\$pdf, '{$pasta}.pdf');\n    }\n\n";
+
+    return "<?php\n\nnamespace Controllers;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Controller;\nuse Nucleo\\RelatorioPdf;\nuse Nucleo\\Sql;\n\nclass {$recurso}Controller extends Controller\n{\n    private {$classe} \$modelo;\n\n    public function __construct()\n    {\n        \$this->modelo = new {$classe}();\n    }\n\n    public function index(): void\n    {\n        \$this->view('{$pasta}/index', ['titulo' => '{$recurso}', 'registros' => \$this->modelo->todos()]);\n    }\n\n    public function criar(): void\n    {\n        \$this->view('{$pasta}/formulario', [\n            'titulo' => 'Novo {$classe}',\n            'registro' => null,{$relacoesView}\n        ]);\n    }\n\n    public function salvar(): void\n    {\n        \$id = \$this->modelo->criar([\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} criado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n    public function ver(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/ver', ['titulo' => '{$classe}', 'registro' => \$registro]);\n    }\n\n    public function editar(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/formulario', [\n            'titulo' => 'Editar {$classe}',\n            'registro' => \$registro,{$relacoesView}\n        ]);\n    }\n\n    public function atualizar(string \$id): void\n    {\n        \$this->modelo->atualizar(\$id, [\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} atualizado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n{$metodoRelatorio}    public function excluir(string \$id): void\n    {\n        if (!\$this->modelo->excluir(\$id)) { \$this->naoEncontrado(); }\n        \$this->mensagem('sucesso', '{$classe} excluido com sucesso.');\n        \$this->redirecionar('{$pasta}');\n    }\n}\n";
 }
 
 function indexGerado(string $tabela, array $campos): string
 {
     $cabecalhos = implode('', array_map(fn ($campo) => "        <th>{$campo[0]}</th>\n", $campos));
     $celulas = implode('', array_map(fn ($campo) => "            <td><?= e(\$registro['{$campo[0]}'] ?? '') ?></td>\n", $campos));
-        return "<div class=\"d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4\"><div><h1 class=\"h3 mb-1\">{$tabela}</h1><p class=\"text-secondary mb-0\">Gerencie os registros cadastrados.</p></div><a class=\"btn btn-primary\" href=\"<?= url('{$tabela}/criar') ?>\">Novo registro</a></div>\n<div class=\"card border-0 shadow-sm\"><div class=\"table-responsive\"><table class=\"table table-hover align-middle mb-0\"><thead class=\"table-light\"><tr><th>ID</th>\n{$cabecalhos}</tr></thead><tbody>\n<?php foreach (\$registros as \$registro): ?>\n<tr><td><a href=\"<?= url('{$tabela}/ver/' . \$registro['id']) ?>\"><?= e(\$registro['id']) ?></a></td>\n{$celulas}</tr>\n<?php endforeach ?>\n</tbody></table></div></div>\n";
+        return "<div class=\"d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4\"><div><h1 class=\"h3 mb-1\">{$tabela}</h1><p class=\"text-secondary mb-0\">Gerencie os registros cadastrados.</p></div><div class=\"d-flex flex-wrap gap-2\"><a class=\"btn btn-outline-secondary\" href=\"<?= url('{$tabela}/relatorio') ?>\">Relatorio PDF</a><a class=\"btn btn-primary\" href=\"<?= url('{$tabela}/criar') ?>\">Novo registro</a></div></div>\n<div class=\"card border-0 shadow-sm\"><div class=\"table-responsive\"><table class=\"table table-hover align-middle mb-0\"><thead class=\"table-light\"><tr><th>ID</th>\n{$cabecalhos}</tr></thead><tbody>\n<?php foreach (\$registros as \$registro): ?>\n<tr><td><a href=\"<?= url('{$tabela}/ver/' . \$registro['id']) ?>\"><?= e(\$registro['id']) ?></a></td>\n{$celulas}</tr>\n<?php endforeach ?>\n</tbody></table></div></div>\n";
 }
 
 function formularioGerado(string $tabela, array $campos): string
@@ -284,7 +300,7 @@ function tipoSqlTeste(string $tipo): string
     } . ' NULL';
 }
 
-function testeControllerGerado(string $tabela, string $classe, string $recurso, string $pasta, array $campos): string
+function testeControllerGeradoBase(string $tabela, string $classe, string $recurso, string $pasta, array $campos): string
 {
     $relacoes = relacoesUnicas($campos);
     $chaves = array_map(fn ($campo) => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)", array_filter($campos, fn ($campo) => ($campo[2] ?? null) !== null));
@@ -322,6 +338,46 @@ function testeControllerGerado(string $tabela, string $classe, string $recurso, 
     }
 
     return "<?php\n\nnamespace Testes\\Controllers;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Database;\nuse Testes\\Suporte\\TesteBase;\n\nclass {$recurso}ControllerTest extends TesteBase\n{\n    private {$classe} \$modelo;\n    private array \$idsRelacoes = [];\n    private array \$idsRelacoesAtualizadas = [];\n\n    public function preparar(): void\n    {\n{$prepararRelacoes}        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabela} (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            {$definicoes}\n        )\");\n        \$this->limparTabela('{$tabela}');\n{$limparRelacoes}{$idsRelacoes}        \$this->modelo = new {$classe}();\n    }\n\n    public function testeExecutaRotasDoCrud(): void\n    {\n        \$lista = \$this->requisitar('{$pasta}');\n        \$this->assertIgual(200, \$lista->status);\n        \$this->assertContem('{$campoPrincipal}', \$lista->html);\n\n        \$formulario = \$this->requisitar('{$pasta}/criar');\n        \$this->assertIgual(200, \$formulario->status);\n        \$this->assertContem('Salvar', \$formulario->html);\n\n        \$salvar = \$this->postar('{$pasta}/salvar', [\n            {$dados}\n        ]);\n        \$this->assertVerdadeiro(\$salvar->redirecionouPara('{$pasta}/ver/1'));\n\n        \$registro = \$this->modelo->todos()[0] ?? null;\n        \$this->assertNaoNulo(\$registro);\n        \$id = (int) \$registro['id'];\n        \$this->assertIgual({$valorInicial}, \$registro['{$campoPrincipal}']);\n\n        \$ver = \$this->requisitar('{$pasta}/ver/' . \$id);\n        \$this->assertIgual(200, \$ver->status);\n        \$this->assertContem((string) \$registro['{$campoPrincipal}'], \$ver->html);\n\n        \$editar = \$this->requisitar('{$pasta}/editar/' . \$id);\n        \$this->assertIgual(200, \$editar->status);\n        \$this->assertContem('Editar {$classe}', \$editar->html);\n\n        \$atualizar = \$this->postar('{$pasta}/atualizar/' . \$id, [\n            {$dadosAtualizados}\n        ]);\n        \$this->assertVerdadeiro(\$atualizar->redirecionouPara('{$pasta}/ver/' . \$id));\n        \$registroAtualizado = \$this->modelo->buscar(\$id);\n        \$this->assertIgual({$valorAtualizado}, \$registroAtualizado['{$campoPrincipal}']);\n\n        \$excluir = \$this->requisitar('{$pasta}/excluir/' . \$id);\n        \$this->assertVerdadeiro(\$excluir->redirecionouPara('{$pasta}'));\n        \$this->assertNulo(\$this->modelo->buscar(\$id));\n    }\n}\n";
+}
+
+function testeControllerGerado(string $tabela, string $classe, string $recurso, string $pasta, array $campos): string
+{
+    $conteudo = testeControllerGeradoBase($tabela, $classe, $recurso, $pasta, $campos);
+    $conteudo = str_replace(
+        "use Nucleo\\Database;\nuse Testes\\Suporte\\TesteBase;",
+        "use Nucleo\\Database;\nuse Nucleo\\Sessao;\nuse Testes\\Suporte\\TesteBase;",
+        $conteudo
+    );
+    $conteudo = str_replace(
+        "    public function preparar(): void\n    {",
+        "    public function preparar(): void\n    {\n        \$this->limparSessao();",
+        $conteudo
+    );
+    $campoPrincipal = $campos[0][0];
+    $conteudo = str_replace(
+        "        \$this->assertContem('{$campoPrincipal}', \$lista->html);",
+        "        \$this->assertContem('{$campoPrincipal}', \$lista->html);\n"
+            . "        \$this->assertContem('{$pasta}/relatorio', \$lista->html);",
+        $conteudo
+    );
+
+    $valorAtualizado = ($campos[0][2] ?? null) !== null
+        ? "\$this->idsRelacoesAtualizadas['{$campoPrincipal}']"
+        : var_export(valorTeste($campos[0][1], true), true);
+    $marcador = "        \$registroAtualizado = \$this->modelo->buscar(\$id);\n"
+        . "        \$this->assertIgual({$valorAtualizado}, \$registroAtualizado['{$campoPrincipal}']);";
+    $relatorio = "        \$semLogin = \$this->requisitar('{$pasta}/relatorio');\n"
+        . "        \$this->assertVerdadeiro(\$semLogin->redirecionouPara('auth/login'));\n\n"
+        . "        Sessao::definir('autenticacao_id', 1);\n"
+        . "        \$relatorio = \$this->requisitar('{$pasta}/relatorio', 'GET', [\n"
+        . "            '{$campoPrincipal}' => {$valorAtualizado},\n"
+        . "        ]);\n"
+        . "        \$this->assertIgual(200, \$relatorio->status);\n"
+        . "        \$this->assertContem('%PDF-1.4', \$relatorio->html);\n"
+        . "        \$this->assertContem('Relatorio de {$tabela}', \$relatorio->html);";
+    $conteudo = str_replace($marcador, $marcador . "\n\n" . $relatorio, $conteudo);
+
+    return $conteudo;
 }
 
 function valorTeste(string $tipo, bool $atualizado = false): mixed

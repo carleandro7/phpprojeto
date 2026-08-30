@@ -64,15 +64,25 @@ public function index(): void
 
 ## Relatorio PDF
 
-Gere um relatorio com todos os registros de um model ou tabela:
+O scaffold gera a rota protegida `/{tabela}/relatorio` e inclui o link
+`Relatorio PDF` na pagina de listagem. A rota passa pelo controller, exige
+autenticacao e aceita filtros por query string, por exemplo:
+
+```text
+/produtos/relatorio?nome=teclado&estoque=1
+```
+
+Para gerar um arquivo offline pelo terminal:
 
 ```bash
 php console.php relatorio:pdf produtos
 php console.php relatorio:pdf Produto relatorios/produtos.pdf
 ```
 
-Sem um caminho, o arquivo e salvo em `relatorios/{tabela}.pdf`. O gerador e
-nativo do framework, pagina os registros e nao exige Composer.
+Sem um caminho, o arquivo e salvo em `relatorios/{tabela}.pdf`. Esse arquivo
+nao deve ser usado como link para dados protegidos; na web, use a rota do
+controller. O gerador e nativo do framework, pagina os registros e nao exige
+Composer.
 
 ## Estrutura
 

@@ -131,6 +131,20 @@ abstract class Controller
         echo json_encode($dados, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     }
 
+    protected function pdf(string $conteudo, string $arquivo = 'relatorio.pdf'): void
+    {
+        $arquivo = preg_replace('/[^A-Za-z0-9._-]/', '_', basename($arquivo)) ?: 'relatorio.pdf';
+
+        if (PHP_SAPI !== 'cli' && !headers_sent()) {
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: inline; filename="' . $arquivo . '"');
+            header('Content-Length: ' . strlen($conteudo));
+            header('X-Content-Type-Options: nosniff');
+        }
+
+        echo $conteudo;
+    }
+
     /**
      * Guarda uma mensagem para aparecer na proxima tela.
      */

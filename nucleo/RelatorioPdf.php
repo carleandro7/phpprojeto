@@ -14,6 +14,20 @@ final class RelatorioPdf
 
     public static function gerar(string $titulo, array $colunas, array $linhas, string $arquivo): void
     {
+        $pdf = self::conteudo($titulo, $colunas, $linhas);
+
+        $diretorio = dirname($arquivo);
+        if (!is_dir($diretorio) && !mkdir($diretorio, 0777, true) && !is_dir($diretorio)) {
+            throw new RuntimeException("Nao foi possivel criar a pasta do relatorio: {$diretorio}");
+        }
+
+        if (file_put_contents($arquivo, $pdf, LOCK_EX) === false) {
+            throw new RuntimeException("Nao foi possivel gravar o relatorio: {$arquivo}");
+        }
+    }
+
+    public static function conteudo(string $titulo, array $colunas, array $linhas): string
+    {
         $colunas = array_values(array_map(static fn ($coluna): string => (string) $coluna, $colunas));
         if ($colunas === []) {
             $colunas = ['id'];
@@ -64,14 +78,7 @@ final class RelatorioPdf
         $pdf .= "trailer\n<< /Size " . ($quantidadeObjetos + 1) . " /Root 1 0 R >>\n"
             . "startxref\n{$inicioXref}\n%%EOF\n";
 
-        $diretorio = dirname($arquivo);
-        if (!is_dir($diretorio) && !mkdir($diretorio, 0777, true) && !is_dir($diretorio)) {
-            throw new RuntimeException("Nao foi possivel criar a pasta do relatorio: {$diretorio}");
-        }
-
-        if (file_put_contents($arquivo, $pdf, LOCK_EX) === false) {
-            throw new RuntimeException("Nao foi possivel gravar o relatorio: {$arquivo}");
-        }
+        return $pdf;
     }
 
     private static function paginas(string $titulo, array $colunas, array $linhas): array

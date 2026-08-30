@@ -162,11 +162,14 @@ abstract class Controller
     }
 
     /** Redireciona visitantes sem sessao para a tela de login. */
-    protected function exigirAutenticacao(): void
+    protected function exigirAutenticacao(?string $provider = null): void
     {
-        if (!Sessao::tem('autenticacao_id') && !Sessao::tem('usuario_id')) {
+        if (!\autenticado($provider)) {
             $this->mensagem('aviso', 'Entre para continuar.');
-            $this->redirecionar('auth/login');
+            $rota = $provider === null
+                ? 'auth/login'
+                : 'auth-' . str_replace('_', '-', strtolower($provider)) . '/login';
+            $this->redirecionar($rota);
         }
     }
 }

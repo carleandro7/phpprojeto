@@ -25,6 +25,20 @@ class Sessao
     /** Erros de validacao que vieram da requisicao anterior. */
     private static array $errosAntigos = [];
 
+    public static function chaveAutenticacao(?string $provider = null): string
+    {
+        return $provider === null || $provider === ''
+            ? 'autenticacao_id'
+            : 'autenticacao_' . self::normalizarProvider($provider) . '_id';
+    }
+
+    public static function chaveUsuario(?string $provider = null): string
+    {
+        return $provider === null || $provider === ''
+            ? 'usuario_id'
+            : 'usuario_' . self::normalizarProvider($provider) . '_id';
+    }
+
     public static function iniciar(): void
     {
         // Na linha de comando (testes) nao existe sessao de verdade:
@@ -151,5 +165,10 @@ class Sessao
     public static function entradaAntiga(): array
     {
         return self::$entradaAntiga;
+    }
+
+    private static function normalizarProvider(string $provider): string
+    {
+        return preg_replace('/[^A-Za-z0-9_]/', '_', strtolower($provider)) ?: 'padrao';
     }
 }

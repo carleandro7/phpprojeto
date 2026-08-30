@@ -44,11 +44,38 @@ class AutenticavelTest extends TesteBase
         $this->assertNulo($this->modelo->autenticar('ana@example.com', 'senha-errada'));
     }
 
+    public function testeExigeEmailSenhaESeisCaracteres(): void
+    {
+        $this->assertExcecao(\InvalidArgumentException::class, fn () => $this->modelo->criar([
+            'nome' => 'Ana',
+            'senha' => 'segredo',
+        ]));
+        $this->assertExcecao(\InvalidArgumentException::class, fn () => $this->modelo->criar([
+            'nome' => 'Ana',
+            'email' => 'ana@example.com',
+        ]));
+        $this->assertExcecao(\InvalidArgumentException::class, fn () => $this->modelo->criarComSenha([
+            'nome' => 'Ana',
+            'email' => 'ana@example.com',
+        ], '12345'));
+        $this->assertIgual(0, $this->modelo->contar());
+    }
+
     public function testeHelperAceitaSessaoGenerica(): void
     {
         $this->assertFalso(autenticado());
         Sessao::definir('autenticacao_id', 7);
         $this->assertVerdadeiro(autenticado());
+        $this->assertIgual(7, usuario_id());
+    }
+
+    public function testeHelperIsolaProviders(): void
+    {
+        $this->assertFalso(autenticado('professor'));
+        Sessao::definir('autenticacao_id', 7);
+        Sessao::definir(Sessao::chaveAutenticacao('professor'), 8);
+        $this->assertVerdadeiro(autenticado('professor'));
+        $this->assertIgual(8, usuario_id('professor'));
         $this->assertIgual(7, usuario_id());
     }
 }

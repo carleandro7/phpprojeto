@@ -84,6 +84,7 @@ Para o exemplo `produtos`, as rotas serao:
 | `/produtos/editar/1` | abre a edicao |
 | `/produtos/atualizar/1` | atualiza via POST |
 | `/produtos/excluir/1` | exclui um registro |
+| `/produtos/relatorio` | gera um PDF filtravel e protegido |
 
 O comando nao sobrescreve arquivos existentes. Se precisar gerar outro recurso,
 use outro nome ou remova manualmente os arquivos gerados depois de confirmar
@@ -107,8 +108,10 @@ receber dados e escolher a view. Use as views somente para HTML.
 
 Os testes gerados usam o banco SQLite em memoria. O teste de model verifica
 criar, buscar, contar, atualizar e excluir; o teste de controller verifica as
-rotas de listagem, cadastro, visualizacao, edicao e exclusao. Rode somente os
-testes do recurso com o filtro:
+rotas de listagem, cadastro, visualizacao, edicao, exclusao e relatorio. Ele
+tambem confirma o link do PDF na listagem, o redirecionamento para login sem
+sessao e a resposta PDF depois da autenticacao. Rode somente os testes do
+recurso com o filtro:
 
 ```bash
 php testes/executar.php ProdutoTest
@@ -143,7 +146,21 @@ Por exemplo, para `produtos`:
 ```
 
 A acao passa pelo controller, exige autenticacao e pode ser personalizada para
-regras de autorizacao e filtros adicionais.
+regras de autorizacao e filtros adicionais. Cada campo informado na query
+string vira um filtro parcial, por exemplo `nome=teclado`; o filtro `id` tambem
+esta disponivel. Sem filtros, todos os registros sao incluidos.
+
+O link gerado na listagem abre o relatorio sem filtros. Para combinar filtros,
+monte a URL manualmente ou crie um formulario GET na view:
+
+```text
+/produtos/relatorio?nome=teclado&estoque=1
+```
+
+A rota web retorna o PDF em memoria e nao cria um arquivo publico. Isso mantem
+a verificacao de autenticacao no controller. O arquivo produzido pelo comando
+offline abaixo e diferente: ele serve para exportacoes executadas no terminal
+e nao deve ser apontado diretamente por uma pagina protegida.
 
 Para gerar um arquivo offline pelo terminal:
 
@@ -188,6 +205,45 @@ php console.php auth:install clientes
 Sem argumento, ou usando `php console.php auth:install Usuario`, o comando
 continua criando o model `Usuario` e a tabela `usuarios` para projetos que
 preferem o atalho padrao.
+
+O `scaffold:crud` ja protege automaticamente a rota `/{tabela}/relatorio`.
+As demais rotas do CRUD nao sao protegidas por padrao. Para restringir uma
+acao, chame `exigirAutenticacao()` no inicio do metodo correspondente.
+
+No cadastro de uma conta, `email` e `senha` sao obrigatorios. A senha tambem
+precisa ter pelo menos 6 caracteres; o formulario e o model aplicam essa
+regra. Em tabelas vazias, o esquema recebe as colunas com `NOT NULL`. Se a
+tabela ja tiver registros, a migracao preserva esses dados e o model continua
+impedindo novos cadastros sem credenciais validas.
+
+### Varios providers (opcional)
+
+Um projeto pode ter mais de uma tabela autenticavel, mas isso nao e ativado
+automaticamente. O primeiro comando continua usando `/auth`. Para gerar uma
+segunda tela de login, passe um prefixo exclusivo:
+
+```bash
+php console.php scaffold:crud professores nome:string
+php console.php auth:install Professore professor
+```
+
+O segundo comando gera um controller proprio e estas telas:
+
+- `views/auth/professor/login.php`;
+- `views/auth/professor/registrar.php`.
+
+As rotas correspondentes sao `/auth-professor/login`,
+`/auth-professor/registrar` e `/auth-professor/sair`. A sessao desse provider
+usa chaves separadas da sessao de `/auth`. Para proteger um controller por
+provider, informe o mesmo prefixo:
+
+```php
+$this->exigirAutenticacao('professor');
+```
+
+Tambem e possivel consultar `autenticado('professor')` e
+`usuario_id('professor')`. O comando nao sobrescreve controller ou telas que
+ja existam; escolha outro prefixo quando necessario.
 
 ### Paginas de autenticacao
 

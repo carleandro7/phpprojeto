@@ -134,16 +134,20 @@ if (!function_exists('mensagens')) {
 }
 
 if (!function_exists('autenticado')) {
-    function autenticado(): bool
+    function autenticado(?string $provider = null): bool
     {
-        return Sessao::tem('autenticacao_id') || Sessao::tem('usuario_id');
+        return Sessao::tem(Sessao::chaveAutenticacao($provider))
+            || Sessao::tem(Sessao::chaveUsuario($provider));
     }
 }
 
 if (!function_exists('usuario_id')) {
-    function usuario_id(): mixed
+    function usuario_id(?string $provider = null): mixed
     {
-        return Sessao::obter('autenticacao_id', Sessao::obter('usuario_id'));
+        return Sessao::obter(
+            Sessao::chaveAutenticacao($provider),
+            Sessao::obter(Sessao::chaveUsuario($provider))
+        );
     }
 }
 

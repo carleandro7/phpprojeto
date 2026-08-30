@@ -13,7 +13,7 @@ Mostra os comandos de geracao disponiveis:
 
 ```text
 php console.php scaffold:crud tabela campo:tipo ...
-php console.php auth:install [Modelo]
+php console.php auth:install [Modelo] [Prefixo]
 php console.php relatorio:pdf modelo|tabela [arquivo.pdf]
 ```
 
@@ -173,7 +173,7 @@ arquivo diretamente.
 ## 5. Gerar autenticacao
 
 ```bash
-php console.php auth:install [Modelo]
+php console.php auth:install [Modelo] [Prefixo]
 ```
 
 Para aplicar autenticacao a um model ja criado:
@@ -192,6 +192,10 @@ php console.php auth:install clientes
 O comando:
 
 - adiciona as colunas `email` e `senha` a tabela quando elas nao existem;
+- marca `email` e `senha` como obrigatorios no esquema quando a tabela ainda
+    esta vazia;
+- exige email preenchido, senha preenchida e senha com pelo menos 6 caracteres
+    ao cadastrar um modelo autenticavel;
 - adiciona o trait `Nucleo\Autenticavel` e os campos ao model;
 - usa `password_hash()` ao criar a senha e `password_verify()` no login;
 - gera o controller de autenticacao e as telas de login/cadastro para esse model.
@@ -207,6 +211,21 @@ controllers/AuthController.php
 views/auth/login.php
 views/auth/registrar.php
 ```
+
+Para instalar autenticacao em outra tabela, use um prefixo diferente. Cada
+provider recebe controller, telas, rotas e chaves de sessao proprios:
+
+```bash
+php console.php scaffold:crud professores nome:string
+php console.php auth:install Professore professor
+```
+
+Nesse exemplo, as telas ficam em `views/auth/professor/` e as rotas sao
+`/auth-professor/login`, `/auth-professor/registrar` e `/auth-professor/sair`.
+O provider padrao continua em `/auth` quando nenhum prefixo e informado.
+Para proteger uma rota pelo provider nomeado, use
+`$this->exigirAutenticacao('professor')`; `autenticado('professor')` e
+`usuario_id('professor')` consultam a mesma sessao.
 
 Tambem atualiza os esquemas SQLite e MySQL. Se o model tiver a coluna `nome`,
 ela aparece no cadastro; caso contrario, a tela usa apenas e-mail e senha.

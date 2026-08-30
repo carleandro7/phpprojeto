@@ -35,7 +35,7 @@ que ainda estiverem ausentes.
 ### Autenticacao
 
 ```bash
-php console.php auth:install [Modelo]
+php console.php auth:install [Modelo] [Prefixo]
 ```
 
 Aplique a autenticacao a um model existente, adicionando `email` e `senha` se
@@ -51,6 +51,19 @@ O comando atualiza o model com `Nucleo\Autenticavel`, gera as telas e as rotas
 `password_hash()` e `password_verify()`. Sem o argumento, o comando cria o
 model padrao `Usuario` e a tabela `usuarios`; `auth:install Usuario` produz o
 mesmo resultado.
+
+O primeiro provider usa `/auth`. Para instalar outro model com telas e sessao
+separadas, informe um prefixo:
+
+```bash
+php console.php auth:install Professor professor
+```
+
+Esse comando gera `/auth-professor/login`, `/auth-professor/registrar` e
+`/auth-professor/sair`, alem de um controller e telas proprios. A protecao de
+uma pagina pode indicar o provider com `$this->exigirAutenticacao('professor')`;
+os helpers aceitam a mesma identificacao, por exemplo
+`autenticado('professor')` e `usuario_id('professor')`.
 
 Para proteger uma pagina:
 

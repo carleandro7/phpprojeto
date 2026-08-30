@@ -22,11 +22,12 @@ completo pelo terminal:</p>
 
 <pre class="codigo">php console.php scaffold:crud produtos nome:string preco:decimal</pre>
 
-<p>Para adicionar usuarios e login, execute:</p>
+<p>Para adicionar login a um model existente, execute:</p>
 
-<pre class="codigo">php console.php auth:install</pre>
+<pre class="codigo">php console.php auth:install Cliente</pre>
 
-<p>Controllers podem exigir login chamando
+<p>O comando adiciona os campos <code>email</code> e <code>senha</code> quando
+necessario. Controllers podem exigir login chamando
 <code>$this-&gt;exigirAutenticacao()</code>. Consulte
 <code>documentacao/Tutorial-Comandos.md</code> para o fluxo completo.</p>
 

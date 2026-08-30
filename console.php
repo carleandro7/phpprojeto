@@ -14,9 +14,9 @@ $comando = $argv[1] ?? '';
 if ($comando === 'scaffold:crud') {
     gerarCrud(array_slice($argv, 2));
 } elseif ($comando === 'auth:install') {
-    gerarAutenticacao();
+    gerarAutenticacao(array_slice($argv, 2));
 } else {
-    echo "Uso:\n  php console.php scaffold:crud tabela campo:tipo ...\n  php console.php scaffold:crud filhos campo_id:belongs_to=tabela_pai\n  php console.php auth:install\n";
+    echo "Uso:\n  php console.php scaffold:crud tabela campo:tipo ...\n  php console.php scaffold:crud filhos campo_id:belongs_to=tabela_pai\n  php console.php auth:install [Modelo]\n";
     exit($comando === '' ? 0 : 1);
 }
 
@@ -66,17 +66,7 @@ function sincronizarColunas(string $tabela, array $campos): void
 {
     $pdo = Database::conexao();
     $driver = Config::obter('banco.driver', 'sqlite');
-    $existentes = [];
-
-    if ($driver === 'mysql') {
-        foreach ($pdo->query("SHOW COLUMNS FROM `{$tabela}`") as $coluna) {
-            $existentes[] = $coluna['Field'];
-        }
-    } else {
-        foreach ($pdo->query("PRAGMA table_info({$tabela})") as $coluna) {
-            $existentes[] = $coluna['name'];
-        }
-    }
+    $existentes = colunasDaTabela($tabela);
 
     foreach ($campos as [$nome, $tipo]) {
         if (!in_array($nome, $existentes, true)) {
@@ -86,6 +76,25 @@ function sincronizarColunas(string $tabela, array $campos): void
             $pdo->exec("ALTER TABLE {$tabela} ADD COLUMN {$nome} {$definicao} NULL");
         }
     }
+}
+
+function colunasDaTabela(string $tabela): array
+{
+    $pdo = Database::conexao();
+    $driver = Config::obter('banco.driver', 'sqlite');
+    $colunas = [];
+
+    if ($driver === 'mysql') {
+        foreach ($pdo->query("SHOW COLUMNS FROM `{$tabela}`") as $coluna) {
+            $colunas[] = $coluna['Field'];
+        }
+    } else {
+        foreach ($pdo->query("PRAGMA table_info({$tabela})") as $coluna) {
+            $colunas[] = $coluna['name'];
+        }
+    }
+
+    return $colunas;
 }
 
 function tipoSql(string $tipo, bool $mysql): string
@@ -292,33 +301,284 @@ function esquema(string $tabela, array $campos, bool $mysql): string
     return $mysql ? "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INT AUTO_INCREMENT PRIMARY KEY,\n    {$definicoes}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n" : "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    {$definicoes}\n);\n";
 }
 
-function gerarAutenticacao(): void
+function gerarAutenticacao(array $argumentos): void
 {
-    escrever(CAMINHO_MODELOS . '/Usuario.php', "<?php\n\nnamespace Modelos;\n\nuse Nucleo\\Model;\n\nclass Usuario extends Model\n{\n    protected string \$tabela = 'usuarios';\n    protected array \$preenchiveis = ['nome', 'email', 'senha'];\n}\n");
-    escrever(CAMINHO_CONTROLLERS . '/AuthController.php', <<<'PHP'
+    if (count($argumentos) > 1) {
+        throw new InvalidArgumentException('Uso: php console.php auth:install [Modelo]');
+    }
+
+    $modelo = resolverModeloAutenticacao($argumentos[0] ?? null);
+    validarArquivosAutenticacaoLivres();
+
+    $campos = $modelo['novo']
+        ? [['nome', 'string', null], ['email', 'string', null], ['senha', 'string', null]]
+        : [['email', 'string', null], ['senha', 'string', null]];
+
+    foreach ([false, true] as $mysql) {
+        $fallback = $modelo['novo'] ? esquemaAutenticacaoPadrao($mysql) : null;
+        atualizarEsquemaAutenticacao($modelo['tabela'], $campos, $mysql, $fallback);
+    }
+
+    Database::migrar();
+    sincronizarColunas($modelo['tabela'], $campos);
+    $colunas = colunasDaTabela($modelo['tabela']);
+
+    foreach (['email', 'senha'] as $campo) {
+        if (!in_array($campo, $colunas, true)) {
+            throw new RuntimeException("Nao foi possivel criar a coluna {$campo} na tabela {$modelo['tabela']}.");
+        }
+    }
+
+    $temNome = in_array('nome', $colunas, true);
+
+    if ($modelo['novo']) {
+        escrever(
+            CAMINHO_MODELOS . "/{$modelo['classe']}.php",
+            "<?php\n\nnamespace Modelos;\n\nuse Nucleo\\Autenticavel;\nuse Nucleo\\Model;\n\nclass {$modelo['classe']} extends Model\n{\n    use Autenticavel;\n\n    protected string \$tabela = '{$modelo['tabela']}';\n    protected array \$preenchiveis = ['nome', 'email', 'senha'];\n}\n"
+        );
+    } else {
+        tornarModeloAutenticavel($modelo['arquivo'], $temNome ? ['nome'] : []);
+    }
+
+    escrever(CAMINHO_CONTROLLERS . '/AuthController.php', controllerAutenticacaoGerado($modelo['classe'], $temNome));
+    escrever(CAMINHO_VIEWS . '/auth/login.php', viewLoginAutenticacaoGerada());
+    escrever(CAMINHO_VIEWS . '/auth/registrar.php', viewRegistroAutenticacaoGerada($temNome));
+
+    echo "Autenticacao aplicada ao modelo {$modelo['classe']}: /auth/login\n";
+}
+
+function resolverModeloAutenticacao(?string $alvo): array
+{
+    if ($alvo === null) {
+        $alvo = 'Usuario';
+    }
+
+    if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $alvo)) {
+        throw new InvalidArgumentException("Modelo invalido: {$alvo}");
+    }
+
+    $arquivoUsuario = CAMINHO_MODELOS . '/Usuario.php';
+    if (in_array(strtolower($alvo), ['usuario', 'usuarios'], true) && !is_file($arquivoUsuario)) {
+        return [
+            'classe' => 'Usuario',
+            'tabela' => 'usuarios',
+            'arquivo' => $arquivoUsuario,
+            'novo' => true,
+        ];
+    }
+
+    $candidatos = array_unique([
+        pascal($alvo),
+        classeDaTabela(strtolower($alvo)),
+    ]);
+
+    foreach ($candidatos as $classe) {
+        $arquivo = CAMINHO_MODELOS . "/{$classe}.php";
+
+        if (!is_file($arquivo)) {
+            continue;
+        }
+
+        $nomeCompleto = "Modelos\\{$classe}";
+        if (!class_exists($nomeCompleto)) {
+            throw new RuntimeException("Nao foi possivel carregar o modelo: {$nomeCompleto}");
+        }
+
+        $instancia = new $nomeCompleto();
+        if (!$instancia instanceof \Nucleo\Model) {
+            throw new RuntimeException("O modelo {$nomeCompleto} deve herdar de Nucleo\\Model.");
+        }
+
+        return [
+            'classe' => $classe,
+            'tabela' => $instancia->tabela(),
+            'arquivo' => $arquivo,
+            'novo' => false,
+        ];
+    }
+
+    throw new RuntimeException("Modelo nao encontrado: {$alvo}. Gere-o antes com scaffold:crud.");
+}
+
+function validarArquivosAutenticacaoLivres(): void
+{
+    $arquivos = [
+        CAMINHO_CONTROLLERS . '/AuthController.php',
+        CAMINHO_VIEWS . '/auth/login.php',
+        CAMINHO_VIEWS . '/auth/registrar.php',
+    ];
+
+    foreach ($arquivos as $arquivo) {
+        if (is_file($arquivo)) {
+            throw new RuntimeException("Arquivo ja existe: {$arquivo}. A autenticacao ja foi instalada.");
+        }
+    }
+}
+
+function atualizarEsquemaAutenticacao(string $tabela, array $campos, bool $mysql, ?string $fallback): void
+{
+    $arquivo = CAMINHO_BANCO . '/esquema.' . ($mysql ? 'mysql' : 'sqlite') . '.sql';
+    if (!is_file($arquivo)) {
+        throw new RuntimeException("Arquivo de esquema nao encontrado: {$arquivo}");
+    }
+
+    $conteudo = file_get_contents($arquivo);
+    $padrao = '/(CREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+' . preg_quote($tabela, '/') . '\\s*\\()(.+?)(\\)\\s*(?:ENGINE\\s*=\\s*[^;]+)?;)/is';
+    $encontrou = false;
+
+    $atualizado = preg_replace_callback($padrao, function (array $correspondencia) use ($campos, &$encontrou, $mysql): string {
+        $encontrou = true;
+        $definicoes = rtrim($correspondencia[2]);
+        $adicoes = [];
+
+        foreach ($campos as [$nome, $tipo]) {
+            if (!preg_match('/\\b' . preg_quote($nome, '/') . '\\b/i', $definicoes)) {
+                $adicoes[] = "{$nome} " . tipoSql($tipo, $mysql) . ' NULL';
+            }
+        }
+
+        if ($adicoes === []) {
+            return $correspondencia[0];
+        }
+
+        return $correspondencia[1]
+            . $definicoes
+            . ",\n    " . implode(",\n    ", $adicoes)
+            . "\n"
+            . $correspondencia[3];
+    }, $conteudo, 1);
+
+    if ($atualizado === null) {
+        throw new RuntimeException("Nao foi possivel atualizar o esquema da tabela {$tabela}.");
+    }
+
+    if (!$encontrou) {
+        if ($fallback === null) {
+            throw new RuntimeException("Tabela {$tabela} nao encontrada no esquema do banco.");
+        }
+        $atualizado = rtrim($atualizado) . "\n\n" . $fallback;
+    }
+
+    file_put_contents($arquivo, $atualizado, LOCK_EX);
+}
+
+function esquemaAutenticacaoPadrao(bool $mysql): string
+{
+    return $mysql
+        ? "CREATE TABLE IF NOT EXISTS usuarios (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(100) NOT NULL, email VARCHAR(150) NOT NULL UNIQUE, senha VARCHAR(255) NOT NULL, criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n"
+        : "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, email TEXT NOT NULL UNIQUE, senha TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);\n";
+}
+
+function tornarModeloAutenticavel(string $arquivo, array $camposAdicionais = []): void
+{
+    $conteudo = file_get_contents($arquivo);
+    if ($conteudo === false) {
+        throw new RuntimeException("Nao foi possivel ler o modelo: {$arquivo}");
+    }
+
+    if (!str_contains($conteudo, 'Nucleo\\Autenticavel')) {
+        $conteudo = preg_replace_callback(
+            '/use\\s+Nucleo\\\\Model;\\s*/',
+            fn (array $correspondencia): string => $correspondencia[0] . "use Nucleo\\Autenticavel;\n",
+            $conteudo,
+            1,
+            $quantidade
+        );
+
+        if ($quantidade !== 1 || $conteudo === null) {
+            throw new RuntimeException("Nao foi possivel preparar o modelo para autenticacao: {$arquivo}");
+        }
+    }
+
+    if (!preg_match('/class\\s+[A-Za-z][A-Za-z0-9_]*\\s+extends\\s+[A-Za-z][A-Za-z0-9_]*\\s*\\{/', $conteudo)) {
+        throw new RuntimeException("Nao foi possivel localizar a classe no modelo: {$arquivo}");
+    }
+
+    if (!preg_match('/class\\s+[A-Za-z][A-Za-z0-9_]*\\s+extends\\s+[A-Za-z][A-Za-z0-9_]*\\s*\\{[^}]*?\\buse\\s+Autenticavel\\s*;/s', $conteudo)) {
+        $conteudo = preg_replace_callback(
+            '/(class\\s+[A-Za-z][A-Za-z0-9_]*\\s+extends\\s+[A-Za-z][A-Za-z0-9_]*\\s*\\{\\s*)/',
+            fn (array $correspondencia): string => $correspondencia[1] . "    use Autenticavel;\n\n",
+            $conteudo,
+            1,
+            $quantidade
+        );
+
+        if ($quantidade !== 1 || $conteudo === null) {
+            throw new RuntimeException("Nao foi possivel ativar a autenticacao no modelo: {$arquivo}");
+        }
+    }
+
+    $padraoPreenchiveis = '/protected\\s+array\\s+\\$preenchiveis\\s*=\\s*\\[(.*?)\\];/s';
+    if (preg_match($padraoPreenchiveis, $conteudo, $correspondencia)) {
+        preg_match_all("/['\"]([a-z][a-z0-9_]*)['\"]/", $correspondencia[1], $encontrados);
+        $campos = $encontrados[1] ?? [];
+
+        foreach (array_merge($camposAdicionais, ['email', 'senha']) as $campo) {
+            if (!in_array($campo, $campos, true)) {
+                $campos[] = $campo;
+            }
+        }
+
+        $declaracao = 'protected array $preenchiveis = ['
+            . implode(', ', array_map(fn (string $campo): string => "'{$campo}'", $campos))
+            . '];';
+        $conteudo = preg_replace($padraoPreenchiveis, $declaracao, $conteudo, 1, $quantidade);
+
+        if ($quantidade !== 1 || $conteudo === null) {
+            throw new RuntimeException("Nao foi possivel atualizar os campos do modelo: {$arquivo}");
+        }
+    } else {
+        $conteudo = preg_replace_callback(
+            '/(class\\s+[A-Za-z][A-Za-z0-9_]*\\s+extends\\s+[A-Za-z][A-Za-z0-9_]*\\s*\\{\\s*)/',
+            fn (array $correspondencia): string => $correspondencia[1] . "    protected array \$preenchiveis = ['" . implode("', '", array_merge($camposAdicionais, ['email', 'senha'])) . "'];\n\n",
+            $conteudo,
+            1,
+            $quantidade
+        );
+
+        if ($quantidade !== 1 || $conteudo === null) {
+            throw new RuntimeException("Nao foi possivel adicionar os campos ao modelo: {$arquivo}");
+        }
+    }
+
+    file_put_contents($arquivo, $conteudo, LOCK_EX);
+}
+
+function controllerAutenticacaoGerado(string $classe, bool $temNome): string
+{
+    $validacaoNome = $temNome ? "\$this->post('nome', '') !== '' && " : '';
+    $dadosNome = $temNome ? "\n                    'nome' => \$this->post('nome')," : '';
+
+    return str_replace(
+        ['__CLASSE__', '__VALIDACAO_NOME__', '__DADOS_NOME__'],
+        [$classe, $validacaoNome, $dadosNome],
+        <<<'PHP'
 <?php
 
 namespace Controllers;
 
-use Modelos\Usuario;
+use Modelos\__CLASSE__;
 use Nucleo\Controller;
 use Nucleo\Sessao;
 
 class AuthController extends Controller
 {
-    private Usuario $usuarios;
+    private __CLASSE__ $modelo;
 
     public function __construct()
     {
-        $this->usuarios = new Usuario();
+        $this->modelo = new __CLASSE__();
     }
 
     public function login(): void
     {
         if ($this->ehPost()) {
-            $usuario = $this->usuarios->primeiroOnde('email', $this->post('email', ''));
-            if ($usuario !== null && password_verify((string) $this->post('senha', ''), $usuario['senha'])) {
-                Sessao::definir('usuario_id', $usuario['id']);
+            $email = (string) $this->post('email', '');
+            $senha = (string) $this->post('senha', '');
+            $registro = $this->modelo->autenticar($email, $senha);
+            if ($registro !== null) {
+                Sessao::definir('autenticacao_id', $registro['id']);
+                Sessao::definir('usuario_id', $registro['id']);
                 $this->redirecionar();
             }
             $this->mensagem('erro', 'E-mail ou senha invalidos.');
@@ -331,8 +591,11 @@ class AuthController extends Controller
         if ($this->ehPost()) {
             $senha = (string) $this->post('senha', '');
             $email = (string) $this->post('email', '');
-            if ($this->post('nome', '') !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) && strlen($senha) >= 6 && $this->usuarios->primeiroOnde('email', $email) === null) {
-                $this->usuarios->criar(['nome' => $this->post('nome'), 'email' => $email, 'senha' => password_hash($senha, PASSWORD_DEFAULT)]);
+            if (__VALIDACAO_NOME__filter_var($email, FILTER_VALIDATE_EMAIL) && strlen($senha) >= 6 && $this->modelo->buscarPorEmail($email) === null) {
+                $dados = [
+                    'email' => $email,__DADOS_NOME__
+                ];
+                $this->modelo->criarComSenha($dados, $senha);
                 $this->mensagem('sucesso', 'Conta criada. Agora entre com seus dados.');
                 $this->redirecionar('auth/login');
             }
@@ -343,17 +606,28 @@ class AuthController extends Controller
 
     public function sair(): void
     {
+        Sessao::remover('autenticacao_id');
         Sessao::remover('usuario_id');
         $this->redirecionar('auth/login');
     }
 }
 PHP);
-    escrever(CAMINHO_VIEWS . '/auth/login.php', "<div class=\"row justify-content-center\"><div class=\"col-12 col-md-7 col-lg-5\"><div class=\"card border-0 shadow-sm p-4\"><h1 class=\"h3 mb-4\">Entrar</h1><form method=\"post\" action=\"<?= url('auth/login') ?>\"><div class=\"mb-3\"><label class=\"form-label\" for=\"email\">E-mail</label><input class=\"form-control\" id=\"email\" type=\"email\" name=\"email\" required></div><div class=\"mb-4\"><label class=\"form-label\" for=\"senha\">Senha</label><input class=\"form-control\" id=\"senha\" type=\"password\" name=\"senha\" required></div><button class=\"btn btn-primary w-100\" type=\"submit\">Entrar</button></form><p class=\"text-center mt-4 mb-0\"><a href=\"<?= url('auth/registrar') ?>\">Criar uma conta</a></p></div></div></div>\n");
-    escrever(CAMINHO_VIEWS . '/auth/registrar.php', "<div class=\"row justify-content-center\"><div class=\"col-12 col-md-7 col-lg-5\"><div class=\"card border-0 shadow-sm p-4\"><h1 class=\"h3 mb-4\">Criar conta</h1><form method=\"post\" action=\"<?= url('auth/registrar') ?>\"><div class=\"mb-3\"><label class=\"form-label\" for=\"nome\">Nome</label><input class=\"form-control\" id=\"nome\" type=\"text\" name=\"nome\" required></div><div class=\"mb-3\"><label class=\"form-label\" for=\"email\">E-mail</label><input class=\"form-control\" id=\"email\" type=\"email\" name=\"email\" required></div><div class=\"mb-4\"><label class=\"form-label\" for=\"senha\">Senha</label><input class=\"form-control\" id=\"senha\" type=\"password\" name=\"senha\" minlength=\"6\" required></div><button class=\"btn btn-primary w-100\" type=\"submit\">Criar conta</button></form></div></div></div>\n");
-    $sqlite = "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, email TEXT NOT NULL UNIQUE, senha TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);\n";
-    $mysql = "CREATE TABLE IF NOT EXISTS usuarios (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(100) NOT NULL, email VARCHAR(150) NOT NULL UNIQUE, senha VARCHAR(255) NOT NULL, criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n";
-    file_put_contents(CAMINHO_BANCO . '/esquema.sqlite.sql', "\n{$sqlite}", FILE_APPEND | LOCK_EX);
-    file_put_contents(CAMINHO_BANCO . '/esquema.mysql.sql', "\n{$mysql}", FILE_APPEND | LOCK_EX);
-    Database::migrar();
-    echo "Autenticacao criada: /auth/login\n";
+}
+
+function viewLoginAutenticacaoGerada(): string
+{
+    return <<<'PHP'
+<div class="row justify-content-center"><div class="col-12 col-md-7 col-lg-5"><div class="card border-0 shadow-sm p-4"><h1 class="h3 mb-4">Entrar</h1><form method="post" action="<?= url('auth/login') ?>"><div class="mb-3"><label class="form-label" for="email">E-mail</label><input class="form-control" id="email" type="email" name="email" autocomplete="email" required></div><div class="mb-4"><label class="form-label" for="senha">Senha</label><input class="form-control" id="senha" type="password" name="senha" autocomplete="current-password" required></div><button class="btn btn-primary w-100" type="submit">Entrar</button></form><p class="text-center mt-4 mb-0"><a href="<?= url('auth/registrar') ?>">Criar uma conta</a></p></div></div></div>
+PHP;
+}
+
+function viewRegistroAutenticacaoGerada(bool $temNome): string
+{
+    $campoNome = $temNome
+        ? '<div class="mb-3"><label class="form-label" for="nome">Nome</label><input class="form-control" id="nome" type="text" name="nome" autocomplete="name" required></div>'
+        : '';
+
+    return str_replace('__CAMPO_NOME__', $campoNome, <<<'PHP'
+<div class="row justify-content-center"><div class="col-12 col-md-7 col-lg-5"><div class="card border-0 shadow-sm p-4"><h1 class="h3 mb-4">Criar conta</h1><form method="post" action="<?= url('auth/registrar') ?>">__CAMPO_NOME__<div class="mb-3"><label class="form-label" for="email">E-mail</label><input class="form-control" id="email" type="email" name="email" autocomplete="email" required></div><div class="mb-4"><label class="form-label" for="senha">Senha</label><input class="form-control" id="senha" type="password" name="senha" autocomplete="new-password" minlength="6" required></div><button class="btn btn-primary w-100" type="submit">Criar conta</button></form></div></div></div>
+PHP);
 }

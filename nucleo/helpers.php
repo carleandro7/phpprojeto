@@ -136,14 +136,14 @@ if (!function_exists('mensagens')) {
 if (!function_exists('autenticado')) {
     function autenticado(): bool
     {
-        return Sessao::tem('usuario_id');
+        return Sessao::tem('autenticacao_id') || Sessao::tem('usuario_id');
     }
 }
 
 if (!function_exists('usuario_id')) {
     function usuario_id(): mixed
     {
-        return Sessao::obter('usuario_id');
+        return Sessao::obter('autenticacao_id', Sessao::obter('usuario_id'));
     }
 }
 

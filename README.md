@@ -35,12 +35,22 @@ que ainda estiverem ausentes.
 ### Autenticacao
 
 ```bash
-php console.php auth:install
+php console.php auth:install [Modelo]
 ```
 
-Gera a tabela `usuarios`, o modelo, as telas de login/cadastro e as rotas
+Aplique a autenticacao a um model existente, adicionando `email` e `senha` se
+necessario:
+
+```bash
+php console.php scaffold:crud clientes nome:string
+php console.php auth:install Cliente
+```
+
+O comando atualiza o model com `Nucleo\Autenticavel`, gera as telas e as rotas
 `/auth/login`, `/auth/registrar` e `/auth/sair`. As senhas usam
-`password_hash()` e `password_verify()`.
+`password_hash()` e `password_verify()`. Sem o argumento, o comando cria o
+model padrao `Usuario` e a tabela `usuarios`; `auth:install Usuario` produz o
+mesmo resultado.
 
 Para proteger uma pagina:
 

@@ -13,7 +13,7 @@ Mostra os comandos de geracao disponiveis:
 
 ```text
 php console.php scaffold:crud tabela campo:tipo ...
-php console.php auth:install
+php console.php auth:install [Modelo]
 ```
 
 ## 2. Preparar o banco
@@ -146,20 +146,43 @@ formularios e tabelas responsivas.
 ## 4. Gerar autenticacao
 
 ```bash
-php console.php auth:install
+php console.php auth:install [Modelo]
 ```
 
-O comando gera:
+Para aplicar autenticacao a um model ja criado:
+
+```bash
+php console.php scaffold:crud clientes nome:string
+php console.php auth:install Cliente
+```
+
+Tambem e aceito o nome da tabela:
+
+```bash
+php console.php auth:install clientes
+```
+
+O comando:
+
+- adiciona as colunas `email` e `senha` a tabela quando elas nao existem;
+- adiciona o trait `Nucleo\Autenticavel` e os campos ao model;
+- usa `password_hash()` ao criar a senha e `password_verify()` no login;
+- gera o controller de autenticacao e as telas de login/cadastro para esse model.
+
+Quando executado sem modelo, o comando mantem o atalho legado e cria `Usuario`
+com a tabela `usuarios`.
+
+O comando gera ou atualiza:
 
 ```text
-modelos/Usuario.php
+modelos/Cliente.php
 controllers/AuthController.php
 views/auth/login.php
 views/auth/registrar.php
 ```
 
-Tambem adiciona a tabela `usuarios` ao esquema SQLite e MySQL. A tabela possui
-`nome`, `email` e `senha`. A senha e armazenada com `password_hash()`.
+Tambem atualiza os esquemas SQLite e MySQL. Se o model tiver a coluna `nome`,
+ela aparece no cadastro; caso contrario, a tela usa apenas e-mail e senha.
 
 Rotas criadas:
 
@@ -172,7 +195,7 @@ Rotas criadas:
 Depois de executar o comando:
 
 1. acesse `/auth/registrar`;
-2. cadastre o nome, e-mail e senha;
+2. cadastre os dados solicitados;
 3. acesse `/auth/login`;
 4. proteja os controllers necessarios com `$this->exigirAutenticacao()`.
 
@@ -247,7 +270,7 @@ git diff --stat
 ```bash
 php instalar.php
 php console.php scaffold:crud clientes nome:string email:string telefone:string
-php console.php auth:install
+php console.php auth:install Cliente
 php testes/executar.php
 php -S localhost:8000 roteador.php
 ```

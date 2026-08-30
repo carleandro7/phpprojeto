@@ -25,7 +25,7 @@
 <ol class="lista-passos">
     <li>Crie sua primeira tabela com <code>php console.php scaffold:crud produto nome:string</code>.</li>
     <li>Abra a rota gerada e personalize o modelo, controlador e as telas.</li>
-    <li>Adicione login com <code>php console.php auth:install</code> quando precisar.</li>
+    <li>Adicione login a um model com <code>php console.php auth:install Cliente</code>.</li>
     <li>Rode os testes com <code>php testes/executar.php</code>.</li>
 </ol>
 

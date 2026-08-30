@@ -132,19 +132,31 @@ esquemas do banco.
 
 ## 3. Adicionar login
 
-Para criar a tabela de usuarios e as telas de autenticacao, execute:
+Para aplicar autenticacao a um model ja criado, execute o scaffold e informe a
+classe do model:
 
 ```bash
-php console.php auth:install
+php console.php scaffold:crud clientes nome:string
+php console.php auth:install Cliente
 ```
 
-O comando cria:
+O comando adiciona `email` e `senha` na tabela se as colunas ainda nao
+existirem, atualiza o model com o trait `Nucleo\Autenticavel` e cria:
 
-- `modelos/Usuario.php`;
 - `controllers/AuthController.php`;
 - `views/auth/login.php`;
 - `views/auth/registrar.php`;
-- a tabela `usuarios` nos esquemas SQLite e MySQL.
+- as rotas de login, cadastro e saida.
+
+Tambem e possivel passar o nome da tabela:
+
+```bash
+php console.php auth:install clientes
+```
+
+Sem argumento, ou usando `php console.php auth:install Usuario`, o comando
+continua criando o model `Usuario` e a tabela `usuarios` para projetos que
+preferem o atalho padrao.
 
 ### Paginas de autenticacao
 
@@ -156,8 +168,9 @@ Depois do comando, estas rotas ficam disponiveis:
 | `/auth/registrar` | cria uma conta |
 | `/auth/sair` | encerra a sessao |
 
-As senhas nunca sao gravadas em texto puro. O controller usa `password_hash()`
-para salvar e `password_verify()` para conferir a senha no login.
+As senhas nunca sao gravadas em texto puro. O model autenticavel usa
+`password_hash()` para salvar e `password_verify()` para conferir a senha no
+login. Se o model tiver `nome`, o cadastro tambem pede esse campo.
 
 ### Proteger um controller
 
@@ -202,7 +215,7 @@ Para iniciar um projeto novo:
 ```bash
 php instalar.php
 php console.php scaffold:crud clientes nome:string email:string telefone:string
-php console.php auth:install
+php console.php auth:install Cliente
 php -S localhost:8000 roteador.php
 ```
 

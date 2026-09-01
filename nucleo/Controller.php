@@ -161,15 +161,101 @@ abstract class Controller
         throw new NaoEncontradoException($mensagem);
     }
 
-    /** Redireciona visitantes sem sessao para a tela de login. */
+    /**
+     * Redireciona visitantes sem sessao para a tela de login.
+     *
+     *     $this->exigirAutenticacao();             // provider padrao (/auth)
+     *     $this->exigirAutenticacao('professor');  // provider nomeado
+     *
+     * Se a tela de login informada nao existir, o erro aponta o comando que
+     * falta rodar em vez de mandar o visitante para uma pagina 404.
+     */
     protected function exigirAutenticacao(?string $provider = null): void
     {
-        if (!\autenticado($provider)) {
-            $this->mensagem('aviso', 'Entre para continuar.');
-            $rota = $provider === null
-                ? 'auth/login'
-                : 'auth-' . str_replace('_', '-', strtolower($provider)) . '/login';
-            $this->redirecionar($rota);
+        $provider = Autenticacao::resolver($provider);
+
+        if (\autenticado($provider)) {
+            return;
         }
+
+        $this->mensagem('aviso', 'Entre para continuar.');
+        $this->redirecionar(Autenticacao::rotaLogin($provider));
+    }
+
+    /**
+     * Garante que a acao so aceite POST.
+     * Use em tudo que grava ou apaga: um link ou um <img> nao podem
+     * disparar uma exclusao.
+     */
+    protected function exigirPost(): void
+    {
+        if (!$this->ehPost()) {
+            $this->naoEncontrado('Esta acao so aceita envio de formulario (POST).');
+        }
+    }
+
+    /**
+     * Confere o token anti-CSRF enviado pelo formulario.
+     * Nas views, gere o campo com <?= campo_csrf() ?>.
+     */
+    protected function exigirTokenValido(): void
+    {
+        if (Sessao::tokenValido($_POST['_token'] ?? null)) {
+            return;
+        }
+
+        $this->mensagem('erro', 'Formulario expirado. Envie novamente.');
+        $this->redirecionar($this->rotaAnterior());
+    }
+
+    /**
+     * Atalho para acoes de gravacao: exige POST e token valido.
+     */
+    protected function exigirFormularioValido(): void
+    {
+        $this->exigirPost();
+        $this->exigirTokenValido();
+    }
+
+    /**
+     * Devolve o visitante ao formulario mantendo o que ele digitou e
+     * mostrando os erros campo a campo.
+     *
+     *     $erros = $this->modelo->validar($dados);
+     *     if ($erros !== []) {
+     *         $this->voltarComErros($erros, 'produtos/criar');
+     *     }
+     */
+    protected function voltarComErros(array $erros, string $rota): never
+    {
+        $entrada = $this->todosOsCampos();
+        unset($entrada['senha'], $entrada['senha_confirmacao'], $entrada['_token']);
+
+        Sessao::guardarErros($erros);
+        Sessao::guardarEntrada($entrada);
+        $this->mensagem('erro', 'Verifique os campos destacados.');
+
+        $this->redirecionar($rota);
+    }
+
+    /**
+     * Rota de onde veio a requisicao, para voltar depois de um erro.
+     */
+    protected function rotaAnterior(string $padrao = ''): string
+    {
+        $referencia = (string) ($_SERVER['HTTP_REFERER'] ?? '');
+
+        if ($referencia === '') {
+            return $padrao;
+        }
+
+        $caminho = (string) (parse_url($referencia, PHP_URL_PATH) ?: '');
+        $base    = (string) (parse_url(url_base(), PHP_URL_PATH) ?: '');
+
+        if ($base !== '' && $base !== '/' && str_starts_with($caminho, $base)) {
+            $caminho = substr($caminho, strlen($base));
+        }
+
+        return trim($caminho, '/');
     }
 }

@@ -133,11 +133,69 @@ if (!function_exists('mensagens')) {
     }
 }
 
+if (!function_exists('token_csrf')) {
+    /**
+     * Token anti-CSRF desta sessao.
+     */
+    function token_csrf(): string
+    {
+        return Sessao::token();
+    }
+}
+
+if (!function_exists('campo_csrf')) {
+    /**
+     * Campo escondido que TODO formulario POST deve conter.
+     *
+     *     <form method="post" action="<?= url('produtos/salvar') ?>">
+     *         <?= campo_csrf() ?>
+     *         ...
+     *     </form>
+     *
+     * No controller, confira com $this->exigirFormularioValido().
+     */
+    function campo_csrf(): string
+    {
+        return '<input type="hidden" name="_token" value="' . e(Sessao::token()) . '">';
+    }
+}
+
+if (!function_exists('sim_nao')) {
+    /**
+     * Mostra um campo boolean como texto: 1 -> "Sim", 0/null -> "Nao".
+     */
+    function sim_nao(mixed $valor): string
+    {
+        if ($valor === null || $valor === '') {
+            return '';
+        }
+
+        return filter_var($valor, FILTER_VALIDATE_BOOLEAN) ? 'Sim' : 'Nao';
+    }
+}
+
 if (!function_exists('autenticado')) {
     function autenticado(?string $provider = null): bool
     {
         return Sessao::tem(Sessao::chaveAutenticacao($provider))
             || Sessao::tem(Sessao::chaveUsuario($provider));
+    }
+}
+
+if (!function_exists('rota_login')) {
+    /**
+     * Rota da tela de login de um provider ('' = provider padrao, /auth).
+     */
+    function rota_login(?string $provider = null): string
+    {
+        return Nucleo\Autenticacao::rotaLogin($provider);
+    }
+}
+
+if (!function_exists('rota_sair')) {
+    function rota_sair(?string $provider = null): string
+    {
+        return Nucleo\Autenticacao::rotaSair($provider);
     }
 }
 

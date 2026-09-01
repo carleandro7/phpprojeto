@@ -2,16 +2,34 @@
 /**
  * Cabecalho com o menu de navegacao.
  * Incluido pelo template/layout.php.
+ *
+ * Os itens vem de configuracoes/menu.php, que o comando scaffold:crud
+ * atualiza a cada CRUD gerado. As telas de login vem dos providers
+ * instalados por auth:install.
  */
+
+use Nucleo\Autenticacao;
+use Nucleo\Config;
 
 // Descobre a rota atual para destacar o item do menu.
 $rotaAtual = trim((string) ($_GET['url'] ?? ''), '/');
-$secao     = explode('/', $rotaAtual)[0] ?: 'home';
+$secao     = explode('/', $rotaAtual)[0] ?: '';
 
-$itens = [
-    'home'   => ['rota' => '',       'texto' => 'Inicio'],
-];
+$itens = array_values(array_filter(
+    (array) Config::obter('menu', [['rota' => '', 'texto' => 'Inicio']]),
+    function (array $item): bool {
+        $regra = $item['auth'] ?? null;
 
+        return match ($regra) {
+            'sim' => Autenticacao::conectados() !== [],
+            'nao' => Autenticacao::conectados() === [],
+            default => true,
+        };
+    }
+));
+
+$conectados = Autenticacao::conectados();
+$providers  = Autenticacao::providers();
 ?>
 <header class="cabecalho">
     <aside class="sidebar offcanvas-lg offcanvas-start" id="menuPrincipal" tabindex="-1">
@@ -21,17 +39,32 @@ $itens = [
         </a>
         <div class="sidebar__rotulo">Navegacao</div>
         <nav class="sidebar__menu">
-            <?php foreach ($itens as $chave => $item): ?>
-                <a class="sidebar__item <?= $secao === $chave ? 'sidebar__item--ativo' : '' ?>" href="<?= url($item['rota']) ?>">
-                    <span class="sidebar__icone"><?= $chave === 'home' ? '&#8962;' : '&#9632;' ?></span>
-                    <?= e($item['texto']) ?>
+            <?php foreach ($itens as $item): ?>
+                <?php $rota = trim((string) ($item['rota'] ?? ''), '/'); ?>
+                <a class="sidebar__item <?= $secao === $rota ? 'sidebar__item--ativo' : '' ?>" href="<?= url($rota) ?>">
+                    <span class="sidebar__icone"><?= $rota === '' ? '&#8962;' : '&#9632;' ?></span>
+                    <?= e((string) ($item['texto'] ?? $rota)) ?>
                 </a>
             <?php endforeach ?>
-            <?php if (autenticado()): ?>
-                <a class="sidebar__item" href="<?= url('auth/sair') ?>"><span class="sidebar__icone">&#8594;</span>Sair</a>
-            <?php elseif (is_file(CAMINHO_CONTROLLERS . '/AuthController.php')): ?>
-                <a class="sidebar__item" href="<?= url('auth/login') ?>"><span class="sidebar__icone">&#8594;</span>Entrar</a>
+
+            <?php if ($providers !== []): ?>
+                <div class="sidebar__rotulo">Conta</div>
             <?php endif ?>
+
+            <?php foreach ($conectados as $provider): ?>
+                <a class="sidebar__item" href="<?= url(Autenticacao::rotaSair($provider)) ?>">
+                    <span class="sidebar__icone">&#8594;</span>
+                    Sair<?= $provider === '' ? '' : ' (' . e($provider) . ')' ?>
+                </a>
+            <?php endforeach ?>
+
+            <?php foreach ($providers as $provider): ?>
+                <?php if (in_array($provider, $conectados, true)) { continue; } ?>
+                <a class="sidebar__item" href="<?= url(Autenticacao::rotaLogin($provider)) ?>">
+                    <span class="sidebar__icone">&#8594;</span>
+                    Entrar<?= $provider === '' ? '' : ' (' . e($provider) . ')' ?>
+                </a>
+            <?php endforeach ?>
         </nav>
     </aside>
     <div class="topbar">

@@ -49,8 +49,11 @@ try {
     $escrever('Pronto! Agora rode o servidor:');
     $escrever('    php -S localhost:8000 roteador.php');
     $escrever('');
+    $escrever('Para criar a tela de login:');
+    $escrever('    php console.php auth:install');
+    $escrever('');
     $escrever('Para criar sua primeira tabela:');
-    $escrever('    php console.php scaffold:crud Produto nome:string preco:decimal');
+    $escrever('    php console.php scaffold:crud produtos nome:string preco:decimal --auth');
     $escrever('');
     $escrever('E os testes:');
     $escrever('    php testes/executar.php');

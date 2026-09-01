@@ -278,15 +278,109 @@ abstract class TesteBase
         }
     }
 
-    /** Atalho para POST. */
+    /**
+     * Atalho para POST. O token anti-CSRF entra sozinho, entao o teste so
+     * precisa se preocupar com os campos do formulario.
+     */
     protected function postar(string $url, array $dados = []): Resposta
     {
+        $dados['_token'] ??= Sessao::token();
+
+        return $this->requisitar($url, 'POST', $dados);
+    }
+
+    /**
+     * POST sem o token, para verificar a protecao contra CSRF:
+     * a acao deve recusar o envio.
+     */
+    protected function postarSemToken(string $url, array $dados = []): Resposta
+    {
+        unset($dados['_token']);
+
         return $this->requisitar($url, 'POST', $dados);
     }
 
     // ------------------------------------------------------------------
     // Ajudantes para testar MODELOS (banco de dados)
     // ------------------------------------------------------------------
+
+    /**
+     * Recria as tabelas usadas pelo teste, apagando as versoes que outras
+     * classes de teste tenham criado antes.
+     *
+     *     $this->recriarTabelas([
+     *         'turmas'   => 'CREATE TABLE turmas (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NULL)',
+     *         'matriculas' => 'CREATE TABLE matriculas (...)',
+     *     ]);
+     *
+     * Todos os testes compartilham a mesma conexao em memoria. Sem recriar,
+     * um "CREATE TABLE IF NOT EXISTS" nao faria nada quando outra classe ja
+     * tivesse criado a tabela com menos colunas, e o resultado passaria a
+     * depender da ordem em que os testes rodam.
+     *
+     * Informe as tabelas pai antes das filhas.
+     *
+     * @param array<string,string> $tabelas nome => comando CREATE TABLE
+     */
+    protected function recriarTabelas(array $tabelas): void
+    {
+        $pdo    = Database::conexao();
+        $sqlite = $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite';
+
+        // As chaves estrangeiras ficam desligadas so durante a recriacao,
+        // senao apagar uma tabela pai esbarraria nas filhas de outros testes.
+        if ($sqlite) {
+            $pdo->exec('PRAGMA foreign_keys = OFF');
+        }
+
+        try {
+            // Outra classe de teste pode ter deixado registros apontando para
+            // estas tabelas. Sem limpar, apagar um registro aqui esbarraria
+            // na chave estrangeira daquela outra tabela.
+            $this->limparDependentes(array_keys($tabelas));
+
+            foreach ($tabelas as $nome => $definicao) {
+                $pdo->exec('DROP TABLE IF EXISTS ' . Sql::identificador($nome, 'tabela'));
+                $pdo->exec($definicao);
+            }
+        } finally {
+            if ($sqlite) {
+                $pdo->exec('PRAGMA foreign_keys = ON');
+            }
+        }
+    }
+
+    /**
+     * Esvazia as tabelas que possuem chave estrangeira para alguma das
+     * tabelas informadas. Usado por recriarTabelas().
+     *
+     * @param list<string> $tabelas
+     */
+    private function limparDependentes(array $tabelas): void
+    {
+        $pdo = Database::conexao();
+
+        if ($pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
+            return;
+        }
+
+        $existentes = $pdo
+            ->query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+            ->fetchAll(\PDO::FETCH_COLUMN);
+
+        foreach ($existentes as $tabela) {
+            if (in_array($tabela, $tabelas, true)) {
+                continue;
+            }
+
+            foreach ($pdo->query("PRAGMA foreign_key_list({$tabela})") as $chave) {
+                if (in_array($chave['table'], $tabelas, true)) {
+                    $pdo->exec("DELETE FROM {$tabela}");
+                    break;
+                }
+            }
+        }
+    }
 
     /**
      * Apaga todos os registros de uma tabela.

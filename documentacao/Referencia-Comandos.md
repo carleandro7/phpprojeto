@@ -1,7 +1,10 @@
 # Referencia de comandos
 
-Este documento lista os comandos disponiveis no framework. Execute todos os
-comandos a partir da pasta raiz do projeto.
+Este documento lista os comandos disponiveis no framework. Execute todos a
+partir da pasta raiz do projeto.
+
+Para o passo a passo comentado, veja o
+[Tutorial dos comandos](Tutorial-Comandos.md).
 
 ## 1. Ver a ajuda do console
 
@@ -9,13 +12,17 @@ comandos a partir da pasta raiz do projeto.
 php console.php
 ```
 
-Mostra os comandos de geracao disponiveis:
+Mostra a sintaxe de todos os comandos, os tipos de campo aceitos e as opcoes.
 
-```text
-php console.php scaffold:crud tabela campo:tipo ...
-php console.php auth:install [Modelo] [Prefixo]
-php console.php relatorio:pdf modelo|tabela [arquivo.pdf]
+Quando um comando falha, a mensagem explica o problema e sugere a correcao.
+Acrescente `-v` para ver arquivo, linha e pilha de chamadas:
+
+```bash
+php console.php scaffold:crud produtos nome:strng -v
 ```
+
+O comando devolve `0` em caso de sucesso e `1` em caso de erro, entao ele pode
+ser usado em scripts.
 
 ## 2. Preparar o banco
 
@@ -36,38 +43,60 @@ esquema, execute o instalador novamente.
 ## 3. Gerar um CRUD
 
 ```bash
-php console.php scaffold:crud tabela campo:tipo campo2:tipo
+php console.php scaffold:crud <tabela> <campo:tipo> ... [opcoes]
 ```
 
-Exemplo de um CRUD simples:
+Exemplo:
 
 ```bash
-php console.php scaffold:crud produtos nome:string preco:decimal
+php console.php scaffold:crud produtos nome:string preco:decimal --auth
 ```
 
 O comando gera:
 
 ```text
 modelos/Produto.php
-testes/modelos/ProdutoTest.php
-testes/controllers/ProdutosControllerTest.php
 controllers/ProdutosController.php
 views/produtos/index.php
 views/produtos/formulario.php
 views/produtos/ver.php
+testes/modelos/ProdutoTest.php
+testes/controllers/ProdutosControllerTest.php
 ```
 
-Tambem adiciona a tabela aos arquivos:
+E atualiza:
 
 ```text
 banco/esquema.sqlite.sql
 banco/esquema.mysql.sql
+configuracoes/menu.php
 ```
 
 Depois executa o esquema do banco configurado. Se a tabela ja existir, as
-colunas novas que ainda nao existirem sao adicionadas sem apagar os dados.
+colunas novas sao adicionadas sem apagar os dados.
 
-### 3.1 Tipos de campos
+Nada e gravado antes de toda a validacao passar: se algum passo falhar,
+nenhum arquivo fica pela metade e o esquema volta ao estado anterior.
+
+### 3.1 Opcoes
+
+| Opcao | Efeito |
+|---|---|
+| `--auth` | exige login em todas as acoes do controller, usando o provider padrao (`/auth`) |
+| `--auth=prefixo` | idem, usando o provider nomeado (`/auth-prefixo`) |
+| `--modelo=Nome` | define a classe do model em vez de derivar do plural |
+| `--sem-menu` | nao acrescenta o recurso a `configuracoes/menu.php` |
+| `-v` | mostra os detalhes tecnicos quando o comando falha |
+
+`--auth` exige que a tela de login ja exista. Rode `auth:install` antes; caso
+contrario o comando para e mostra qual comando falta.
+
+**Sem `--auth`, todas as rotas ficam publicas**, inclusive `excluir` e
+`relatorio`. O comando avisa isso no fim da execucao. Para proteger apenas
+algumas acoes, edite o controller gerado e chame `$this->exigirAutenticacao()`
+somente nos metodos desejados.
+
+### 3.2 Tipos de campos
 
 ```bash
 php console.php scaffold:crud produtos \
@@ -81,34 +110,54 @@ php console.php scaffold:crud produtos \
     horario:time
 ```
 
-Tipos aceitos:
-
 | Tipo | SQLite | MySQL | Campo HTML |
 |---|---|---|---|
-| `string` | `TEXT` | `VARCHAR(255)` | texto |
-| `text` | `TEXT` | `VARCHAR(255)` | texto |
-| `integer` | `INTEGER` | `INT` | numero |
-| `decimal` | `REAL` | `DECIMAL(12,2)` | numero |
-| `boolean` | `INTEGER` | `TINYINT(1)` | checkbox |
-| `date` | `TEXT` | `DATE` | data |
-| `datetime` | `TEXT` | `DATETIME` | data e hora |
-| `time` | `TEXT` | `TIME` | hora |
+| `string` | `TEXT` | `VARCHAR(255)` | `input type="text"` |
+| `text` | `TEXT` | `TEXT` | `textarea` |
+| `integer` | `INTEGER` | `INT` | `input type="number"` |
+| `decimal` | `REAL` | `DECIMAL(12,2)` | `input type="number" step="0.01"` |
+| `boolean` | `INTEGER` | `TINYINT(1)` | checkbox (grava `1` ou `0`) |
+| `date` | `TEXT` | `DATE` | `input type="date"` |
+| `datetime` | `TEXT` | `DATETIME` | `input type="datetime-local"` |
+| `time` | `TEXT` | `TIME` | `input type="time"` |
+
+Campos `boolean` sempre gravam `1` ou `0`: o formulario acompanha um
+`<input type="hidden">` porque o navegador nao envia nada quando a caixa esta
+desmarcada. Na listagem e na tela de detalhes o valor aparece como
+`Sim` / `Nao`, pelo helper `sim_nao()`.
 
 Regras:
 
-- o nome da tabela deve conter letras minusculas, numeros ou `_`;
-- o nome deve comecar com uma letra;
-- cada campo usa o formato `nome:tipo`;
-- `id` e `criado_em` sao reservados e nao podem ser informados;
-- o comando nao sobrescreve arquivos existentes;
-- os campos gerados sao incluidos no model, formulario, tabela e teste.
+- o nome da tabela deve conter letras minusculas, numeros ou `_`, comecando
+  por uma letra;
+- cada campo usa o formato `nome:tipo`; um campo sem `:` e recusado;
+- `id` e `criado_em` sao reservados;
+- campos repetidos sao recusados;
+- o comando nao sobrescreve arquivos existentes.
 
-Se o nome da tabela terminar em `s`, o framework usa a forma singular para a
-classe. Por exemplo, `produtos` gera `Produto`; `pedidos` gera `Pedido`.
+### 3.3 Nome da classe (singular)
 
-### 3.2 Relacao 1:N
+A classe do model vem do singular da tabela:
 
-Crie primeiro a tabela do lado 1 e depois a tabela do lado N:
+| Tabela | Classe | Tabela | Classe |
+|---|---|---|---|
+| `produtos` | `Produto` | `professores` | `Professor` |
+| `clientes` | `Cliente` | `animais` | `Animal` |
+| `cidades` | `Cidade` | `papeis` | `Papel` |
+| `opcoes` | `Opcao` | `viagens` | `Viagem` |
+| `itens` | `Item` | `jardins` | `Jardim` |
+| `luzes` | `Luz` | `pais` | `Pais` |
+
+Nenhuma regra automatica acerta todos os plurais do portugues. Quando errar,
+informe a classe:
+
+```bash
+php console.php scaffold:crud funis nome:string --modelo=Funil
+```
+
+### 3.4 Relacao 1:N
+
+Crie primeiro a tabela do lado 1:
 
 ```bash
 php console.php scaffold:crud turmas nome:string
@@ -118,46 +167,77 @@ php console.php scaffold:crud matriculas nome:string turma_id:belongs_to=turmas
 O formato `campo_id:belongs_to=tabela_pai` faz o scaffold:
 
 - criar `turma_id` como chave estrangeira inteira;
-- criar no model `Matricula` o metodo `turmas()`, que carrega todos os registros da tabela pai;
+- criar no model `Matricula` o metodo `turmas()`, que carrega os registros pai;
 - enviar a lista `turmas` pelo controller nas telas de cadastro e edicao;
-- gerar um `<select>` Bootstrap 5 com todas as turmas;
+- gerar um `<select>` Bootstrap 5 com as opcoes;
 - criar a restricao `FOREIGN KEY` nos esquemas SQLite e MySQL;
-- incluir o teste da relacao no teste gerado.
+- marcar o campo como obrigatorio na validacao do model;
+- incluir a verificacao da relacao no teste gerado.
+
+Se a tabela pai nao existir, o comando para e mostra como cria-la — antes ele
+gerava um CRUD que quebrava no primeiro cadastro.
 
 O select usa o campo `nome` como texto da opcao. Se ele nao existir, usa
-`descricao` e, por ultimo, `#id`. Para mais de uma relacao, repita o formato
-com o nome da tabela correspondente.
+`descricao` e, por ultimo, `#id`.
 
-### 3.3 Rotas do CRUD
+### 3.5 Rotas do CRUD
 
-Para o exemplo `matriculas`, as rotas geradas sao:
+Para o exemplo `matriculas`:
 
-```text
-/matriculas                 lista registros
-/matriculas/criar           mostra o formulario de cadastro
-/matriculas/salvar          grava um registro via POST
-/matriculas/ver/1           mostra o registro 1
-/matriculas/editar/1        mostra o formulario de edicao
-/matriculas/atualizar/1     atualiza o registro 1 via POST
-/matriculas/excluir/1       exclui o registro 1
+| Rota | Metodo | Funcao |
+|---|---|---|
+| `/matriculas` | GET | lista registros |
+| `/matriculas/criar` | GET | formulario de cadastro |
+| `/matriculas/salvar` | POST | grava um registro |
+| `/matriculas/ver/1` | GET | mostra o registro 1 |
+| `/matriculas/editar/1` | GET | formulario de edicao |
+| `/matriculas/atualizar/1` | POST | atualiza o registro 1 |
+| `/matriculas/excluir/1` | POST | exclui o registro 1 |
+| `/matriculas/relatorio` | GET | PDF filtravel |
+
+`salvar`, `atualizar` e `excluir` **so aceitam POST e exigem o token do
+formulario**. Acessar `/matriculas/excluir/1` pelo navegador devolve 404: sem
+isso, um `<img src="...">` em outro site apagaria registros da sua aplicacao.
+
+As telas geradas usam Bootstrap 5 e ja trazem os botoes de **Editar** e
+**Excluir** na listagem e na tela de detalhes.
+
+### 3.6 Validacao
+
+O model gerado ja implementa `validar()`:
+
+```php
+public function validar(array $dados, int|string|null $ignorarId = null): array
+{
+    return (new Validador($dados))
+        ->obrigatorio('nome')
+        ->maximo('nome', 255)
+        ->numerico('preco')
+        ->erros();
+}
 ```
 
-As telas geradas ja usam Bootstrap 5, com cards, grids, rows, colunas,
-formularios e tabelas responsivas.
+O primeiro campo vira obrigatorio, campos numericos recebem `numerico()`,
+campos `string` recebem `maximo(255)`, um campo chamado `email` recebe
+`email()` e as chaves estrangeiras viram obrigatorias. Ajuste a vontade.
+
+Quando a validacao falha, o controller chama `voltarComErros()`, que devolve o
+visitante ao formulario com as mensagens por campo e o que ele ja tinha
+digitado (helpers `erro_de()`, `tem_erro()` e `antigo()`).
 
 ## 4. Gerar relatorio PDF
 
-O scaffold tambem gera a rota web protegida:
+Rota web gerada pelo scaffold:
 
 ```text
 /produtos/relatorio
 /produtos/relatorio?nome=teclado&estoque=1
 ```
 
-Essa rota passa pelo controller, exige autenticacao e filtra os campos
-informados na query string.
+Campos de texto filtram por trecho (`LIKE`); `id`, numeros, booleanos e chaves
+estrangeiras filtram por valor exato.
 
-Para gerar um arquivo offline:
+Arquivo offline pelo terminal:
 
 ```bash
 php console.php relatorio:pdf produtos
@@ -165,15 +245,14 @@ php console.php relatorio:pdf Produto relatorios/produtos.pdf
 ```
 
 O comando aceita o nome da tabela ou do model. Sem o segundo argumento, salva
-em `relatorios/{tabela}.pdf`; caminhos relativos partem da raiz do projeto.
-O arquivo inclui as colunas da tabela e todos os registros encontrados. Para
-dados protegidos na web, use a rota do controller em vez de apontar para esse
-arquivo diretamente.
+em `relatorios/{tabela}.pdf`; caminhos relativos partem da raiz do projeto e
+nao podem sair dela. Para dados protegidos na web, use a rota do controller em
+vez de apontar para o arquivo.
 
 ## 5. Gerar autenticacao
 
 ```bash
-php console.php auth:install [Modelo] [Prefixo]
+php console.php auth:install [Modelo|tabela] [Prefixo]
 ```
 
 Para aplicar autenticacao a um model ja criado:
@@ -183,72 +262,135 @@ php console.php scaffold:crud clientes nome:string
 php console.php auth:install Cliente
 ```
 
-Tambem e aceito o nome da tabela:
-
-```bash
-php console.php auth:install clientes
-```
+Tambem e aceito o nome da tabela (`auth:install clientes`). Sem argumentos, o
+comando cria o model `Usuario` com a tabela `usuarios`.
 
 O comando:
 
-- adiciona as colunas `email` e `senha` a tabela quando elas nao existem;
-- marca `email` e `senha` como obrigatorios no esquema quando a tabela ainda
-    esta vazia;
-- exige email preenchido, senha preenchida e senha com pelo menos 6 caracteres
-    ao cadastrar um modelo autenticavel;
-- adiciona o trait `Nucleo\Autenticavel` e os campos ao model;
-- usa `password_hash()` ao criar a senha e `password_verify()` no login;
-- gera o controller de autenticacao e as telas de login/cadastro para esse model.
+- adiciona as colunas `email` e `senha` quando elas nao existem;
+- cria um indice UNIQUE em `email`, para nao existirem duas contas com o mesmo
+  e-mail;
+- adiciona `use Nucleo\Autenticavel;` ao model, preservando a formatacao do
+  arquivo, e inclui os campos em `$preenchiveis`;
+- gera o controller, as telas de login/cadastro e um teste de integracao.
 
-Quando executado sem modelo, o comando mantem o atalho legado e cria `Usuario`
-com a tabela `usuarios`.
-
-O comando gera ou atualiza:
+Gera ou atualiza:
 
 ```text
-modelos/Cliente.php
+modelos/Cliente.php                          (atualizado)
 controllers/AuthController.php
 views/auth/login.php
 views/auth/registrar.php
+testes/controllers/AuthControllerTest.php
+banco/esquema.sqlite.sql, banco/esquema.mysql.sql
 ```
-
-Para instalar autenticacao em outra tabela, use um prefixo diferente. Cada
-provider recebe controller, telas, rotas e chaves de sessao proprios:
-
-```bash
-php console.php scaffold:crud professores nome:string
-php console.php auth:install Professore professor
-```
-
-Nesse exemplo, as telas ficam em `views/auth/professor/` e as rotas sao
-`/auth-professor/login`, `/auth-professor/registrar` e `/auth-professor/sair`.
-O provider padrao continua em `/auth` quando nenhum prefixo e informado.
-Para proteger uma rota pelo provider nomeado, use
-`$this->exigirAutenticacao('professor')`; `autenticado('professor')` e
-`usuario_id('professor')` consultam a mesma sessao.
-
-Tambem atualiza os esquemas SQLite e MySQL. Se o model tiver a coluna `nome`,
-ela aparece no cadastro; caso contrario, a tela usa apenas e-mail e senha.
 
 Rotas criadas:
 
 ```text
-/auth/login             mostra e processa o login
-/auth/registrar         cria uma conta
-/auth/sair              encerra a sessao
+/auth/registrar    cria uma conta
+/auth/login        mostra e processa o login
+/auth/sair         encerra a sessao
 ```
 
-Depois de executar o comando:
+### 5.1 Como a senha e tratada
 
-1. acesse `/auth/registrar`;
-2. cadastre os dados solicitados;
-3. acesse `/auth/login`;
-4. proteja os controllers necessarios com `$this->exigirAutenticacao()`.
+O trait `Nucleo\Autenticavel` intercepta a escrita no model:
 
-O comando nao deve ser executado novamente se os arquivos de autenticacao ja
-existirem, pois o gerador nao sobrescreve arquivos.
+| Chamada | Resultado |
+|---|---|
+| `criar(['email' => ..., 'senha' => 'segredo123'])` | grava o hash |
+| `atualizar($id, ['senha' => 'novasenha'])` | grava o hash |
+| `atualizar($id, ['senha' => ''])` | ignora o campo e mantem a senha atual |
+| `criar(['senha' => $hashPronto])` | mantem o hash, sem aplicar de novo |
+| `criarComSenha($dados, $senha)` | exige e-mail valido e senha com 6+ caracteres |
+| `criar(['nome' => 'Joao'])` | funciona: o CRUD comum nao precisa de credenciais |
+| `trocarSenha($id, 'novasenha')` | valida e grava o hash |
 
-## 6. Executar todos os testes
+`autenticar($email, $senha)` confere com `password_verify()` e devolve o
+registro ou `null`.
+
+Isso significa que o CRUD gerado antes do `auth:install` continua funcionando
+depois dele: `salvar()` grava `nome` e `telefone` sem exigir e-mail e senha.
+As colunas `email` e `senha` sao adicionadas como `NULL` justamente por isso —
+quem exige credenciais e a tela de cadastro, nao a tabela.
+
+Para o model `Usuario` criado do zero, as colunas nascem `NOT NULL` com
+`UNIQUE` no e-mail, porque a unica porta de entrada e a tela de cadastro.
+
+### 5.2 Varios providers
+
+Cada provider recebe controller, telas, rotas e chaves de sessao proprios:
+
+```bash
+php console.php scaffold:crud professores nome:string
+php console.php auth:install Professor professor
+php console.php scaffold:crud aulas titulo:string --auth=professor
+```
+
+As telas ficam em `views/auth/professor/` e as rotas sao
+`/auth-professor/login`, `/auth-professor/registrar` e `/auth-professor/sair`.
+
+Para proteger uma rota pelo provider nomeado:
+
+```php
+$this->exigirAutenticacao('professor');
+```
+
+`autenticado('professor')` e `usuario_id('professor')` consultam a mesma
+sessao. Sem argumento, `exigirAutenticacao()` usa o provider padrao (`/auth`);
+se ele nao existir e houver apenas um provider instalado, usa esse. Se nenhuma
+tela de login existir, o erro diz qual comando rodar em vez de redirecionar
+para uma pagina inexistente.
+
+## 6. Protecao dos formularios (CSRF)
+
+Todo formulario gerado inclui:
+
+```php
+<?= campo_csrf() ?>
+```
+
+E o controller confere o token:
+
+```php
+$this->exigirFormularioValido();   // exige POST + token valido
+```
+
+Nos seus proprios formularios, faca o mesmo. Sem o campo, o envio e recusado e
+o visitante volta para a tela anterior com uma mensagem.
+
+Metodos disponiveis em `Nucleo\Controller`:
+
+| Metodo | Funcao |
+|---|---|
+| `exigirPost()` | recusa a requisicao se nao for POST |
+| `exigirTokenValido()` | confere o token anti-CSRF |
+| `exigirFormularioValido()` | os dois acima |
+| `exigirAutenticacao(?string $provider)` | redireciona quem nao esta logado |
+| `voltarComErros(array $erros, string $rota)` | volta ao formulario com erros e dados |
+
+## 7. Menu de navegacao
+
+Os itens da barra lateral ficam em `configuracoes/menu.php`:
+
+```php
+return [
+    ['rota' => '', 'texto' => 'Inicio'],
+    ['rota' => 'produtos', 'texto' => 'Produtos'],
+    // scaffold:crud
+];
+```
+
+O `scaffold:crud` acrescenta uma linha antes do comentario `// scaffold:crud`.
+Use `--sem-menu` para pular esse passo, ou edite o arquivo a vontade (texto,
+ordem, remover itens). Cada item aceita `'auth' => 'sim'` para aparecer apenas
+para quem esta logado, ou `'auth' => 'nao'` para o contrario.
+
+Os links de **Entrar** e **Sair** sao montados a partir dos providers
+instalados, entao um provider com prefixo tambem aparece no menu.
+
+## 8. Executar todos os testes
 
 ```bash
 php testes/executar.php
@@ -256,69 +398,51 @@ php testes/executar.php
 
 Executa todos os arquivos terminados em `Test.php` dentro de `testes/`.
 
-Os testes gerados pelo scaffold verificam o CRUD basico do model e as rotas do
-controller.
+Os testes gerados pelo scaffold verificam:
 
-## 7. Executar um teste especifico
+- o CRUD completo do model e as regras de validacao;
+- as rotas de listagem, cadastro, visualizacao, edicao, exclusao e relatorio;
+- a recusa de dados invalidos;
+- a recusa de um POST sem token (CSRF);
+- a recusa de exclusao por GET;
+- o redirecionamento para o login, quando o recurso foi gerado com `--auth`.
+
+O teste gerado por `auth:install` verifica cadastro, login, saida, senha
+errada, e-mail repetido, senha curta e POST sem token — alem de confirmar que
+a senha ficou com hash no banco.
+
+## 9. Executar um teste especifico
 
 ```bash
 php testes/executar.php ProdutoTest
-```
-
-O filtro tambem aceita parte do nome da classe ou do metodo:
-
-```bash
 php testes/executar.php ViewTest
-php testes/executar.php testeMontaUrlInterna
 php testes/executar.php ProdutoTest::testeExecutaCrudCompleto
 ```
 
-## 8. Iniciar o servidor PHP
+## 10. Iniciar o servidor PHP
 
 ```bash
 php -S localhost:8000 roteador.php
-```
-
-Depois abra:
-
-```text
-http://localhost:8000
 ```
 
 O arquivo `roteador.php` permite que as rotas do framework funcionem no
 servidor embutido do PHP.
 
-## 9. Validar a sintaxe de um arquivo PHP
+## 11. Validar a sintaxe de um arquivo PHP
 
 ```bash
 php -l console.php
-php -l controllers/ProdutosController.php
-```
-
-Para validar todos os arquivos PHP:
-
-```bash
 find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
 ```
 
-## 10. Verificar o diff do Git
-
-Este comando nao pertence ao framework, mas ajuda antes de criar um commit:
-
-```bash
-git diff --check
-git status --short
-git diff --stat
-```
-
-## 11. Fluxo completo para um projeto novo
+## 12. Fluxo completo para um projeto novo
 
 ```bash
 php instalar.php
-php console.php scaffold:crud clientes nome:string email:string telefone:string
-php console.php auth:install Cliente
+php console.php auth:install
+php console.php scaffold:crud clientes nome:string email:string telefone:string --auth
 php testes/executar.php
 php -S localhost:8000 roteador.php
 ```
 
-Depois abra `/auth/registrar`, crie o primeiro usuario e acesse `/clientes`.
+Abra `/auth/registrar`, crie o primeiro usuario e acesse `/clientes`.

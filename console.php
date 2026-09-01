@@ -1,5 +1,16 @@
 <?php
 
+/**
+ * Console do framework.
+ *
+ *     php console.php scaffold:crud tabela campo:tipo ...
+ *     php console.php auth:install [Modelo] [Prefixo]
+ *     php console.php relatorio:pdf modelo|tabela [arquivo.pdf]
+ *
+ * Todos os comandos param no primeiro problema e nao deixam arquivos pela
+ * metade: os arquivos so sao gravados depois que tudo foi validado.
+ */
+
 if (PHP_SAPI !== 'cli') {
     exit("Este arquivo so pode ser executado pelo terminal.\n");
 }
@@ -10,86 +21,337 @@ use Nucleo\Config;
 use Nucleo\Database;
 use Nucleo\RelatorioPdf;
 
-$comando = $argv[1] ?? '';
+const TIPOS_ACEITOS = ['string', 'text', 'integer', 'decimal', 'boolean', 'date', 'datetime', 'time'];
+const CAMPOS_RESERVADOS = ['id', 'criado_em'];
 
-if ($comando === 'scaffold:crud') {
-    gerarCrud(array_slice($argv, 2));
-} elseif ($comando === 'auth:install') {
-    gerarAutenticacao(array_slice($argv, 2));
-} elseif ($comando === 'relatorio:pdf') {
-    gerarRelatorioPdf(array_slice($argv, 2));
-} else {
-    echo "Uso:\n  php console.php scaffold:crud tabela campo:tipo ...\n  php console.php scaffold:crud filhos campo_id:belongs_to=tabela_pai\n  php console.php auth:install [Modelo] [Prefixo]\n";
-    echo "  php console.php relatorio:pdf modelo|tabela [arquivo.pdf]\n";
-    exit($comando === '' ? 0 : 1);
+$comando    = $argv[1] ?? '';
+$argumentos = array_slice($argv, 2);
+$detalhado  = in_array('-v', $argumentos, true);
+$argumentos = array_values(array_filter($argumentos, fn (string $a): bool => $a !== '-v'));
+
+try {
+    match ($comando) {
+        'scaffold:crud' => gerarCrud($argumentos),
+        'auth:install'  => gerarAutenticacao($argumentos),
+        'relatorio:pdf' => gerarRelatorioPdf($argumentos),
+        default         => ajuda($comando),
+    };
+} catch (Throwable $erro) {
+    fwrite(STDERR, "\n[ERRO] " . $erro->getMessage() . "\n");
+
+    if ($detalhado) {
+        fwrite(STDERR, "\n" . $erro->getFile() . ':' . $erro->getLine() . "\n");
+        fwrite(STDERR, $erro->getTraceAsString() . "\n");
+    } else {
+        fwrite(STDERR, "\nUse -v para ver os detalhes tecnicos.\n");
+    }
+
+    exit(1);
 }
+
+exit(0);
+
+// =====================================================================
+// Ajuda
+// =====================================================================
+
+function ajuda(string $comando): void
+{
+    $texto = <<<'TXT'
+    Console do framework MVC
+
+    Uso:
+      php console.php scaffold:crud <tabela> <campo:tipo> ... [opcoes]
+      php console.php auth:install [Modelo|tabela] [Prefixo]
+      php console.php relatorio:pdf <modelo|tabela> [arquivo.pdf]
+
+    Tipos de campo:
+      string  text  integer  decimal  boolean  date  datetime  time
+
+    Relacao 1:N (a tabela pai precisa existir antes):
+      php console.php scaffold:crud matriculas nome:string turma_id:belongs_to=turmas
+
+    Opcoes do scaffold:crud:
+      --auth[=prefixo]   exige login em todas as rotas do recurso
+      --modelo=Nome      define o nome da classe do model
+      --sem-menu         nao adiciona o recurso a configuracoes/menu.php
+
+    Opcao geral:
+      -v                 mostra os detalhes tecnicos quando algo falha
+
+    Exemplos:
+      php console.php scaffold:crud produtos nome:string preco:decimal --auth
+      php console.php auth:install Cliente
+      php console.php auth:install Professor professor
+
+    TXT;
+
+    echo $texto;
+
+    if ($comando !== '') {
+        throw new InvalidArgumentException("Comando desconhecido: {$comando}");
+    }
+}
+
+// =====================================================================
+// scaffold:crud
+// =====================================================================
 
 function gerarCrud(array $argumentos): void
 {
-    if (count($argumentos) < 2) {
-        throw new InvalidArgumentException('Uso: php console.php scaffold:crud tabela campo:tipo ...');
+    [$posicionais, $opcoes] = separarOpcoes($argumentos, ['auth', 'modelo', 'sem-menu']);
+
+    if (count($posicionais) < 2) {
+        throw new InvalidArgumentException(
+            "Uso: php console.php scaffold:crud <tabela> <campo:tipo> ...\n"
+            . 'Exemplo: php console.php scaffold:crud produtos nome:string preco:decimal'
+        );
     }
-    $tabela = strtolower($argumentos[0]);
-    validarNome($tabela, 'tabela');
+
+    $tabela = strtolower($posicionais[0]);
+    validarNome($tabela, 'nome de tabela');
+
+    $campos = interpretarCampos(array_slice($posicionais, 1));
+    $classe = $opcoes['modelo'] ?? classeDaTabela($tabela);
+
+    if (!preg_match('/^[A-Z][A-Za-z0-9_]*$/', $classe)) {
+        throw new InvalidArgumentException(
+            "Nome de model invalido: {$classe}. Use PascalCase, por exemplo --modelo=Produto"
+        );
+    }
+
+    $recurso  = pascal($tabela);
+    $pasta    = strtolower($recurso);
+    $provider = interpretarOpcaoAuth($opcoes);
+
+    validarRelacoes($campos, $tabela);
+
+    // Sem essa checagem o CRUD nasceria redirecionando para uma tela de
+    // login que nao existe, e os testes gerados falhariam de cara.
+    if ($provider !== false && !Nucleo\Autenticacao::instalado($provider)) {
+        throw new RuntimeException(
+            'A tela de login ' . ($provider === '' ? '/auth' : '/auth-' . str_replace('_', '-', $provider))
+            . " ainda nao existe.\nInstale-a antes:\n  php console.php auth:install"
+            . ($provider === '' ? '' : " <Modelo> {$provider}")
+        );
+    }
+
+    // -------------------------------------------------------------
+    // 1. Monta tudo na memoria e confere se os caminhos estao livres.
+    // -------------------------------------------------------------
+    $arquivos = [
+        CAMINHO_MODELOS . "/{$classe}.php"                          => modeloGerado($tabela, $classe, $campos),
+        CAMINHO_CONTROLLERS . "/{$recurso}Controller.php"           => controllerGerado($tabela, $classe, $recurso, $pasta, $campos, $provider),
+        CAMINHO_VIEWS . "/{$pasta}/index.php"                       => indexGerado($tabela, $pasta, $campos),
+        CAMINHO_VIEWS . "/{$pasta}/formulario.php"                  => formularioGerado($pasta, $campos),
+        CAMINHO_VIEWS . "/{$pasta}/ver.php"                         => verGerado($pasta, $campos),
+        CAMINHO_RAIZ . "/testes/modelos/{$classe}Test.php"          => testeModeloGerado($tabela, $classe, $campos),
+        CAMINHO_RAIZ . "/testes/controllers/{$recurso}ControllerTest.php" => testeControllerGerado($tabela, $classe, $recurso, $pasta, $campos, $provider),
+    ];
+
+    conferirCaminhosLivres(array_keys($arquivos));
+
+    // -------------------------------------------------------------
+    // 2. Banco de dados (com desfazer se algo falhar).
+    // -------------------------------------------------------------
+    $esquemas = lerEsquemas();
+
+    try {
+        registrarEsquema($tabela, esquema($tabela, $campos, false), false);
+        registrarEsquema($tabela, esquema($tabela, $campos, true), true);
+
+        Database::migrar();
+        sincronizarColunas($tabela, $campos);
+    } catch (Throwable $e) {
+        restaurarEsquemas($esquemas);
+
+        throw $e;
+    }
+
+    // -------------------------------------------------------------
+    // 3. So agora grava os arquivos.
+    // -------------------------------------------------------------
+    escreverArquivos($arquivos);
+
+    $noMenu = !isset($opcoes['sem-menu']) && registrarNoMenu($pasta, $recurso);
+
+    echo "CRUD criado: /{$pasta}\n";
+
+    foreach (array_keys($arquivos) as $caminho) {
+        echo '  + ' . caminhoRelativo($caminho) . "\n";
+    }
+
+    echo '  ~ banco/esquema.sqlite.sql, banco/esquema.mysql.sql' . "\n";
+
+    if ($noMenu) {
+        echo '  ~ configuracoes/menu.php' . "\n";
+    }
+
+    echo "\n";
+
+    if ($provider === false) {
+        echo "ATENCAO: todas as rotas de /{$pasta} sao publicas, inclusive excluir e o relatorio.\n";
+        echo "Para exigir login, gere com --auth ou chame exigirAutenticacao() no controller.\n";
+    } else {
+        echo 'Rotas protegidas pelo login '
+            . ($provider === '' ? '/auth' : '/auth-' . str_replace('_', '-', $provider))
+            . ".\n";
+    }
+
+    echo "\nRode os testes com: php testes/executar.php {$classe}\n";
+}
+
+/**
+ * Traduz "nome:string" e "turma_id:belongs_to=turmas" em [nome, tipo, relacao].
+ *
+ * @return list<array{0:string,1:string,2:?string}>
+ */
+function interpretarCampos(array $definicoes): array
+{
     $campos = [];
-    foreach (array_slice($argumentos, 1) as $definicao) {
-        [$nome, $tipo] = array_pad(explode(':', strtolower($definicao), 2), 2, 'string');
+    $vistos = [];
+
+    foreach ($definicoes as $definicao) {
+        if (!str_contains($definicao, ':')) {
+            throw new InvalidArgumentException(
+                "Campo sem tipo: {$definicao}. Use o formato nome:tipo, por exemplo {$definicao}:string"
+            );
+        }
+
+        [$nome, $tipo] = explode(':', strtolower($definicao), 2);
         $relacao = null;
 
         if (str_starts_with($tipo, 'belongs_to=')) {
             $relacao = substr($tipo, strlen('belongs_to='));
-            validarNome($relacao, 'tabela relacionada');
+
+            if ($relacao === '') {
+                throw new InvalidArgumentException(
+                    "Informe a tabela pai: {$nome}:belongs_to=nome_da_tabela"
+                );
+            }
+
+            validarNome($relacao, 'nome de tabela relacionada');
             $tipo = 'integer';
         }
 
-        validarNome($nome, 'campo');
-        if (in_array($nome, ['id', 'criado_em'], true) || !in_array($tipo, ['string', 'text', 'integer', 'decimal', 'boolean', 'date', 'datetime', 'time'], true)) {
-            throw new InvalidArgumentException("Campo ou tipo invalido: {$definicao}");
-        }
-        $campos[] = [$nome, $tipo, $relacao];
-    }
-    $classe = classeDaTabela($tabela);
-    $recurso = pascal($tabela);
-    $pasta = strtolower($recurso);
-    $metodosRelacoes = metodosRelacoesModelo($campos);
+        validarNome($nome, 'nome de campo');
 
-    escrever(CAMINHO_MODELOS . "/{$classe}.php", "<?php\n\nnamespace Modelos;\n\nuse Nucleo\\Model;\n\nclass {$classe} extends Model\n{\n    protected string \$tabela = '{$tabela}';\n    protected array \$preenchiveis = [" . implode(', ', array_map(fn ($campo) => "'{$campo[0]}'", $campos)) . "];\n    protected string \$ordemPadrao = 'id DESC';\n\n{$metodosRelacoes}}\n");
-    escrever(CAMINHO_CONTROLLERS . "/{$recurso}Controller.php", controllerGerado($tabela, $classe, $recurso, $pasta, $campos));
-    escrever(CAMINHO_VIEWS . "/{$pasta}/index.php", indexGerado($tabela, $campos));
-    escrever(CAMINHO_VIEWS . "/{$pasta}/formulario.php", formularioGerado($tabela, $campos));
-    escrever(CAMINHO_VIEWS . "/{$pasta}/ver.php", verGerado($tabela, $campos));
-    escrever(CAMINHO_RAIZ . "/testes/modelos/{$classe}Test.php", testeModeloGerado($tabela, $classe, $campos));
-    escrever(CAMINHO_RAIZ . "/testes/controllers/{$recurso}ControllerTest.php", testeControllerGerado($tabela, $classe, $recurso, $pasta, $campos));
-    file_put_contents(CAMINHO_BANCO . '/esquema.sqlite.sql', "\n" . esquema($tabela, $campos, false), FILE_APPEND | LOCK_EX);
-    file_put_contents(CAMINHO_BANCO . '/esquema.mysql.sql', "\n" . esquema($tabela, $campos, true), FILE_APPEND | LOCK_EX);
-    Database::migrar();
-    sincronizarColunas($tabela, $campos);
-    echo "CRUD criado: /{$pasta}\n";
+        if (in_array($nome, CAMPOS_RESERVADOS, true)) {
+            throw new InvalidArgumentException(
+                "O campo \"{$nome}\" e reservado pelo framework e nao deve ser informado."
+            );
+        }
+
+        if (isset($vistos[$nome])) {
+            throw new InvalidArgumentException("O campo \"{$nome}\" foi informado duas vezes.");
+        }
+
+        if (!in_array($tipo, TIPOS_ACEITOS, true)) {
+            throw new InvalidArgumentException(
+                "Tipo invalido em \"{$definicao}\": {$tipo}.\n"
+                . 'Tipos aceitos: ' . implode(', ', TIPOS_ACEITOS) . ' ou belongs_to=tabela_pai'
+            );
+        }
+
+        $vistos[$nome] = true;
+        $campos[]      = [$nome, $tipo, $relacao];
+    }
+
+    return $campos;
 }
 
-function sincronizarColunas(string $tabela, array $campos, array $obrigatorias = []): void
+/**
+ * A tabela pai de um belongs_to precisa existir antes: caso contrario o
+ * CRUD nasce quebrado (model inexistente, insert recusado pela FK).
+ */
+function validarRelacoes(array $campos, string $tabela): void
 {
-    $pdo = Database::conexao();
-    $driver = Config::obter('banco.driver', 'sqlite');
+    foreach (relacoesUnicas($campos) as $campo) {
+        $pai = $campo[2];
+
+        if ($pai === $tabela) {
+            continue; // auto-relacionamento
+        }
+
+        if (tabelaConhecida($pai)) {
+            continue;
+        }
+
+        throw new RuntimeException(
+            "A tabela pai \"{$pai}\" nao existe (campo {$campo[0]}).\n"
+            . "Gere-a primeiro:\n"
+            . "  php console.php scaffold:crud {$pai} nome:string"
+        );
+    }
+}
+
+/** A tabela existe no banco, no esquema ou como model? */
+function tabelaConhecida(string $tabela): bool
+{
+    if (is_file(CAMINHO_MODELOS . '/' . classeDaTabela($tabela) . '.php')) {
+        return true;
+    }
+
+    foreach (['sqlite', 'mysql'] as $driver) {
+        $arquivo = CAMINHO_BANCO . "/esquema.{$driver}.sql";
+
+        if (is_file($arquivo) && preg_match(padraoCreateTable($tabela), (string) file_get_contents($arquivo))) {
+            return true;
+        }
+    }
+
+    try {
+        return colunasDaTabela($tabela) !== [];
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+/**
+ * Le a opcao --auth: ausente = false, --auth = provider padrao,
+ * --auth=professor = provider nomeado.
+ */
+function interpretarOpcaoAuth(array $opcoes): string|false
+{
+    if (!array_key_exists('auth', $opcoes)) {
+        return false;
+    }
+
+    $valor = $opcoes['auth'];
+
+    if ($valor === true || $valor === '') {
+        return '';
+    }
+
+    $prefixo = normalizarPrefixoAutenticacao((string) $valor);
+
+    return $prefixo === 'auth' ? '' : $prefixo;
+}
+
+// =====================================================================
+// Banco de dados
+// =====================================================================
+
+function sincronizarColunas(string $tabela, array $campos): void
+{
+    $pdo       = Database::conexao();
+    $driver    = Config::obter('banco.driver', 'sqlite');
     $existentes = colunasDaTabela($tabela);
-    $temRegistros = $obrigatorias !== []
-        && (int) $pdo->query("SELECT COUNT(*) FROM {$tabela}")->fetchColumn() > 0;
 
     foreach ($campos as [$nome, $tipo]) {
-        if (!in_array($nome, $existentes, true)) {
-            $definicao = $driver === 'mysql'
-                ? tipoSql($tipo, true)
-                : tipoSql($tipo, false);
-            $restricao = in_array($nome, $obrigatorias, true) && !$temRegistros ? ' NOT NULL' : ' NULL';
-            $pdo->exec("ALTER TABLE {$tabela} ADD COLUMN {$nome} {$definicao}{$restricao}");
+        if (in_array($nome, $existentes, true)) {
+            continue;
         }
+
+        // Colunas novas entram como NULL: a tabela pode ja ter registros.
+        $pdo->exec("ALTER TABLE {$tabela} ADD COLUMN {$nome} " . tipoSql($tipo, $driver === 'mysql') . ' NULL');
     }
 }
 
 function colunasDaTabela(string $tabela): array
 {
-    $pdo = Database::conexao();
-    $driver = Config::obter('banco.driver', 'sqlite');
+    $pdo     = Database::conexao();
+    $driver  = Config::obter('banco.driver', 'sqlite');
     $colunas = [];
 
     if ($driver === 'mysql') {
@@ -105,31 +367,151 @@ function colunasDaTabela(string $tabela): array
     return $colunas;
 }
 
+/**
+ * Cria um indice UNIQUE se ele ainda nao existir.
+ * Sem isso duas contas poderiam ter o mesmo e-mail e o login ficaria ambiguo.
+ */
+function garantirIndiceUnico(string $tabela, string $coluna): bool
+{
+    $pdo    = Database::conexao();
+    $driver = Config::obter('banco.driver', 'sqlite');
+    $indice = "idx_{$tabela}_{$coluna}_unico";
+
+    try {
+        if ($driver === 'mysql') {
+            $existe = $pdo->query("SHOW INDEX FROM `{$tabela}` WHERE Key_name = '{$indice}'")->fetch();
+
+            if ($existe !== false) {
+                return true;
+            }
+
+            $pdo->exec("CREATE UNIQUE INDEX `{$indice}` ON `{$tabela}` (`{$coluna}`)");
+
+            return true;
+        }
+
+        $pdo->exec("CREATE UNIQUE INDEX IF NOT EXISTS {$indice} ON {$tabela} ({$coluna})");
+
+        return true;
+    } catch (Throwable $e) {
+        echo "AVISO: nao foi possivel criar o indice unico de {$tabela}.{$coluna}.\n";
+        echo '       ' . $e->getMessage() . "\n";
+        echo "       Provavelmente ja existem valores repetidos. Corrija-os e rode de novo.\n";
+
+        return false;
+    }
+}
+
 function tipoSql(string $tipo, bool $mysql): string
 {
     if ($mysql) {
         return match ($tipo) {
-            'integer' => 'INT',
-            'decimal' => 'DECIMAL(12,2)',
-            'boolean' => 'TINYINT(1)',
-            'date' => 'DATE',
+            'integer'  => 'INT',
+            'decimal'  => 'DECIMAL(12,2)',
+            'boolean'  => 'TINYINT(1)',
+            'date'     => 'DATE',
             'datetime' => 'DATETIME',
-            'time' => 'TIME',
-            default => 'VARCHAR(255)',
+            'time'     => 'TIME',
+            'text'     => 'TEXT',
+            default    => 'VARCHAR(255)',
         };
     }
 
     return match ($tipo) {
         'integer', 'boolean' => 'INTEGER',
-        'decimal' => 'REAL',
-        default => 'TEXT',
+        'decimal'            => 'REAL',
+        default              => 'TEXT',
     };
 }
+
+function esquema(string $tabela, array $campos, bool $mysql): string
+{
+    $colunas = array_map(
+        fn (array $campo): string => "{$campo[0]} " . tipoSql($campo[1], $mysql) . ' NULL',
+        $campos
+    );
+
+    $chaves = array_map(
+        fn (array $campo): string => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)",
+        array_filter($campos, fn (array $campo): bool => ($campo[2] ?? null) !== null)
+    );
+
+    $definicoes = implode(",\n    ", array_merge($colunas, $chaves));
+
+    return $mysql
+        ? "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INT AUTO_INCREMENT PRIMARY KEY,\n    {$definicoes}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+        : "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    {$definicoes}\n);";
+}
+
+/** Expressao que encontra o CREATE TABLE de uma tabela especifica. */
+function padraoCreateTable(string $tabela): string
+{
+    return '/CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+`?'
+        . preg_quote($tabela, '/')
+        . '`?\s*\(.*?\)\s*(?:ENGINE\s*=\s*[^;]+)?;/is';
+}
+
+/**
+ * Grava a definicao da tabela no arquivo de esquema.
+ *
+ * Se a tabela ja estiver no arquivo, a definicao antiga e SUBSTITUIDA.
+ * Sem isso o arquivo acumularia dois "CREATE TABLE IF NOT EXISTS produtos"
+ * e uma instalacao limpa criaria a tabela sem as colunas novas.
+ */
+function registrarEsquema(string $tabela, string $definicao, bool $mysql): void
+{
+    $arquivo  = arquivoEsquema($mysql);
+    $conteudo = is_file($arquivo) ? (string) file_get_contents($arquivo) : '';
+    $padrao   = padraoCreateTable($tabela);
+
+    if (preg_match($padrao, $conteudo)) {
+        $conteudo = preg_replace_callback($padrao, fn (): string => rtrim($definicao), $conteudo, 1);
+    } else {
+        $conteudo = rtrim($conteudo) . "\n\n" . rtrim($definicao) . "\n";
+    }
+
+    file_put_contents($arquivo, ltrim((string) $conteudo, "\n"), LOCK_EX);
+}
+
+function arquivoEsquema(bool $mysql): string
+{
+    return CAMINHO_BANCO . '/esquema.' . ($mysql ? 'mysql' : 'sqlite') . '.sql';
+}
+
+/** @return array<string,string> */
+function lerEsquemas(): array
+{
+    $copias = [];
+
+    foreach ([false, true] as $mysql) {
+        $arquivo = arquivoEsquema($mysql);
+
+        if (is_file($arquivo)) {
+            $copias[$arquivo] = (string) file_get_contents($arquivo);
+        }
+    }
+
+    return $copias;
+}
+
+function restaurarEsquemas(array $copias): void
+{
+    foreach ($copias as $arquivo => $conteudo) {
+        file_put_contents($arquivo, $conteudo, LOCK_EX);
+    }
+}
+
+// =====================================================================
+// Nomes
+// =====================================================================
 
 function validarNome(string $nome, string $tipo): void
 {
     if (!preg_match('/^[a-z][a-z0-9_]*$/', $nome)) {
-        throw new InvalidArgumentException("{$tipo} invalido: {$nome}");
+        throw new InvalidArgumentException(
+            "{$tipo} invalido: \"{$nome}\".\n"
+            . 'Use apenas letras minusculas, numeros e "_", comecando por uma letra.'
+        );
     }
 }
 
@@ -138,11 +520,67 @@ function pascal(string $nome): string
     return str_replace(' ', '', ucwords(str_replace('_', ' ', $nome)));
 }
 
+/**
+ * Singular aproximado em portugues, usado para nomear a classe do model.
+ *
+ *     produtos    -> produto        professores -> professor
+ *     animais     -> animal         opcoes      -> opcao
+ *     viagens     -> viagem         itens       -> item
+ *
+ * Nenhuma regra automatica acerta 100% dos plurais. Quando errar, informe o
+ * nome da classe na mao:
+ *
+ *     php console.php scaffold:crud funis nome:string --modelo=Funil
+ */
+function singular(string $tabela): string
+{
+    static $excecoes = [
+        'pais'     => 'pais',
+        'paises'   => 'pais',
+        'itens'    => 'item',
+        'status'   => 'status',
+        'onibus'   => 'onibus',
+        'lapis'    => 'lapis',
+        'virus'    => 'virus',
+        'atlas'    => 'atlas',
+        'oculos'   => 'oculos',
+        'pires'    => 'pires',
+        'meses'    => 'mes',
+        'caes'     => 'cao',
+        'paes'     => 'pao',
+        'males'    => 'mal',
+        'consules' => 'consul',
+    ];
+
+    if (isset($excecoes[$tabela])) {
+        return $excecoes[$tabela];
+    }
+
+    $regras = [
+        '/oes$/'           => 'ao',  // opcoes    -> opcao
+        '/aes$/'           => 'ao',  // paes      -> pao
+        '/ais$/'           => 'al',  // animais   -> animal
+        '/eis$/'           => 'el',  // papeis    -> papel
+        '/ois$/'           => 'ol',  // lencois   -> lencol
+        '/uis$/'           => 'ul',  // azuis     -> azul
+        '/ens$/'           => 'em',  // viagens   -> viagem
+        '/ns$/'            => 'm',   // jardins   -> jardim
+        '/(r|z|s|l|n)es$/' => '$1',  // professores -> professor
+        '/s$/'             => '',    // produtos  -> produto
+    ];
+
+    foreach ($regras as $padrao => $troca) {
+        if (preg_match($padrao, $tabela)) {
+            return (string) preg_replace($padrao, $troca, $tabela);
+        }
+    }
+
+    return $tabela;
+}
+
 function classeDaTabela(string $tabela): string
 {
-    $singular = str_ends_with($tabela, 's') ? substr($tabela, 0, -1) : $tabela;
-
-    return pascal($singular);
+    return pascal(singular($tabela));
 }
 
 function relacoesUnicas(array $campos): array
@@ -158,9 +596,204 @@ function relacoesUnicas(array $campos): array
     return array_values($relacoes);
 }
 
-function nomeMetodoRelacao(string $tabela): string
+// =====================================================================
+// Arquivos
+// =====================================================================
+
+function caminhoRelativo(string $caminho): string
 {
-    return $tabela;
+    return str_starts_with($caminho, CAMINHO_RAIZ . '/')
+        ? substr($caminho, strlen(CAMINHO_RAIZ) + 1)
+        : $caminho;
+}
+
+function conferirCaminhosLivres(array $caminhos): void
+{
+    $ocupados = array_values(array_filter($caminhos, 'is_file'));
+
+    if ($ocupados === []) {
+        return;
+    }
+
+    throw new RuntimeException(
+        "Estes arquivos ja existem e nao serao sobrescritos:\n  "
+        . implode("\n  ", array_map('caminhoRelativo', $ocupados))
+        . "\n\nApague-os (ou use outro nome de tabela) antes de gerar de novo."
+    );
+}
+
+/**
+ * Grava todos os arquivos de uma vez. Se algum falhar, apaga os que ja
+ * tinham sido criados para nao deixar o projeto pela metade.
+ *
+ * @param array<string,string> $arquivos caminho => conteudo
+ */
+function escreverArquivos(array $arquivos): void
+{
+    $criados = [];
+    $pastas  = [];
+
+    try {
+        foreach ($arquivos as $caminho => $conteudo) {
+            $pasta = dirname($caminho);
+
+            if (!is_dir($pasta)) {
+                mkdir($pasta, 0777, true);
+                $pastas[] = $pasta;
+            }
+
+            if (file_put_contents($caminho, rtrim($conteudo, "\n") . "\n", LOCK_EX) === false) {
+                throw new RuntimeException('Nao foi possivel gravar: ' . caminhoRelativo($caminho));
+            }
+
+            $criados[] = $caminho;
+        }
+    } catch (Throwable $e) {
+        foreach ($criados as $caminho) {
+            @unlink($caminho);
+        }
+
+        foreach (array_reverse($pastas) as $pasta) {
+            @rmdir($pasta);
+        }
+
+        throw $e;
+    }
+}
+
+/**
+ * Acrescenta o recurso a configuracoes/menu.php para ele aparecer na
+ * barra lateral sem ninguem precisar editar HTML.
+ */
+function registrarNoMenu(string $rota, string $texto): bool
+{
+    $arquivo = CAMINHO_CONFIGURACOES . '/menu.php';
+
+    if (!is_file($arquivo)) {
+        return false;
+    }
+
+    $conteudo = (string) file_get_contents($arquivo);
+
+    if (preg_match("/'rota'\s*=>\s*'" . preg_quote($rota, '/') . "'/", $conteudo)) {
+        return false;
+    }
+
+    $linha = "    ['rota' => '{$rota}', 'texto' => '{$texto}'],\n";
+
+    if (str_contains($conteudo, '    // scaffold:crud')) {
+        $conteudo = str_replace('    // scaffold:crud', $linha . '    // scaffold:crud', $conteudo);
+    } elseif (preg_match('/\n\];\s*$/', $conteudo)) {
+        $conteudo = (string) preg_replace('/\n\];(\s*)$/', "\n" . $linha . '];$1', $conteudo, 1);
+    } else {
+        return false;
+    }
+
+    file_put_contents($arquivo, $conteudo, LOCK_EX);
+
+    return true;
+}
+
+/** Separa "--opcao=valor" dos argumentos comuns. */
+function separarOpcoes(array $argumentos, array $aceitas): array
+{
+    $opcoes      = [];
+    $posicionais = [];
+
+    foreach ($argumentos as $argumento) {
+        if (!str_starts_with($argumento, '--')) {
+            $posicionais[] = $argumento;
+            continue;
+        }
+
+        [$nome, $valor] = array_pad(explode('=', substr($argumento, 2), 2), 2, true);
+        $nome = strtolower($nome);
+
+        if (!in_array($nome, $aceitas, true)) {
+            throw new InvalidArgumentException(
+                "Opcao desconhecida: --{$nome}.\nOpcoes aceitas: --" . implode(', --', $aceitas)
+            );
+        }
+
+        $opcoes[$nome] = $valor;
+    }
+
+    return [$posicionais, $opcoes];
+}
+
+// =====================================================================
+// Geradores: model
+// =====================================================================
+
+function modeloGerado(string $tabela, string $classe, array $campos): string
+{
+    $preenchiveis = implode(', ', array_map(fn (array $c): string => "'{$c[0]}'", $campos));
+
+    return strtr(<<<'PHP'
+        <?php
+
+        namespace Modelos;
+
+        use Nucleo\Model;
+        use Nucleo\Validador;
+
+        class {{CLASSE}} extends Model
+        {
+            protected string $tabela = '{{TABELA}}';
+            protected array $preenchiveis = [{{PREENCHIVEIS}}];
+            protected string $ordemPadrao = 'id DESC';
+
+            /**
+             * Regras de validacao do formulario.
+             * Devolve um array vazio quando esta tudo certo.
+             */
+            public function validar(array $dados, int|string|null $ignorarId = null): array
+            {
+                return (new Validador($dados))
+        {{REGRAS}}
+                    ->erros();
+            }
+        {{RELACOES}}}
+        PHP, [
+        '{{CLASSE}}'       => $classe,
+        '{{TABELA}}'       => $tabela,
+        '{{PREENCHIVEIS}}' => $preenchiveis,
+        '{{REGRAS}}'       => regrasDeValidacao($campos),
+        '{{RELACOES}}'     => metodosRelacoesModelo($campos),
+    ]);
+}
+
+/**
+ * O primeiro campo vira obrigatorio; os demais ganham a regra do seu tipo.
+ * Ajuste a vontade depois de gerar.
+ */
+function regrasDeValidacao(array $campos): string
+{
+    $linhas = [];
+
+    foreach ($campos as $indice => [$nome, $tipo, $relacao]) {
+        $regras = [];
+
+        if ($indice === 0 || $relacao !== null) {
+            $regras[] = "->obrigatorio('{$nome}')";
+        }
+
+        if ($nome === 'email') {
+            $regras[] = "->email('{$nome}')";
+        }
+
+        $regras[] = match ($tipo) {
+            'integer', 'decimal' => "->numerico('{$nome}')",
+            'string'             => "->maximo('{$nome}', 255)",
+            default              => null,
+        };
+
+        foreach (array_filter($regras) as $regra) {
+            $linhas[] = '            ' . $regra;
+        }
+    }
+
+    return implode("\n", $linhas);
 }
 
 function metodosRelacoesModelo(array $campos): string
@@ -168,389 +801,983 @@ function metodosRelacoesModelo(array $campos): string
     $metodos = [];
 
     foreach (relacoesUnicas($campos) as $campo) {
-        $tabelaRelacionada = $campo[2];
-        $classeRelacionada = classeDaTabela($tabelaRelacionada);
-        $metodo = nomeMetodoRelacao($tabelaRelacionada);
-        $metodos[] = "    public function {$metodo}(): array\n    {\n        return (new \\Modelos\\{$classeRelacionada}())->todos();\n    }";
+        $tabelaPai = $campo[2];
+        $classePai = classeDaTabela($tabelaPai);
+
+        $metodos[] = strtr(<<<'PHP'
+
+                /** Opcoes da tabela pai, usadas no <select> do formulario. */
+                public function {{METODO}}(): array
+                {
+                    return (new \Modelos\{{CLASSE_PAI}}())->todos();
+                }
+
+            PHP, [
+            '{{METODO}}'     => $tabelaPai,
+            '{{CLASSE_PAI}}' => $classePai,
+        ]);
     }
 
-    return $metodos === [] ? '' : implode("\n\n", $metodos) . "\n";
+    return implode('', $metodos);
 }
 
-function escrever(string $arquivo, string $conteudo): void
-{
-    if (is_file($arquivo)) {
-        throw new RuntimeException("Arquivo ja existe: {$arquivo}");
-    }
-    if (!is_dir(dirname($arquivo))) {
-        mkdir(dirname($arquivo), 0777, true);
-    }
-    file_put_contents($arquivo, $conteudo . "\n", LOCK_EX);
-}
+// =====================================================================
+// Geradores: controller
+// =====================================================================
 
-function controllerGerado(string $tabela, string $classe, string $recurso, string $pasta, array $campos): string
-{
-    $dados = implode("\n            ", array_map(fn ($campo) => "'{$campo[0]}' => \$this->post('{$campo[0]}'),", $campos));
-    $relacoesView = '';
+function controllerGerado(
+    string $tabela,
+    string $classe,
+    string $recurso,
+    string $pasta,
+    array $campos,
+    string|false $provider
+): string {
+    $dados = implode("\n", array_map(
+        fn (array $c): string => "            '{$c[0]}' => \$this->post('{$c[0]}'),",
+        $campos
+    ));
+
+    $relacoes = '';
 
     foreach (relacoesUnicas($campos) as $campo) {
-        $tabelaRelacionada = $campo[2];
-        $metodo = nomeMetodoRelacao($tabelaRelacionada);
-        $relacoesView .= "\n            '{$tabelaRelacionada}' => \$this->modelo->{$metodo}(),";
+        $relacoes .= "\n            '{$campo[2]}' => \$this->modelo->{$campo[2]}(),";
     }
 
-    $colunasRelatorio = implode(', ', array_merge(
-        ["'id'"],
-        array_map(fn ($campo) => "'{$campo[0]}'", $campos)
-    ));
-    $filtrosRelatorio = '';
+    $guarda = $provider === false
+        ? ''
+        : '        $this->exigirAutenticacao(' . ($provider === '' ? '' : "'{$provider}'") . ");\n\n";
 
-    foreach (array_merge([['id']], $campos) as $campo) {
-        $filtrosRelatorio .= "        \$filtro = \$this->get('{$campo[0]}');\n"
+    $filtros = '';
+
+    foreach (array_merge([['id', 'integer', null]], $campos) as [$nome, $tipo, $relacao]) {
+        $exato = $nome === 'id' || $relacao !== null || in_array($tipo, ['integer', 'decimal', 'boolean'], true);
+
+        $filtros .= "        \$filtro = \$this->get('{$nome}');\n"
             . "        if (is_scalar(\$filtro) && (string) \$filtro !== '') {\n"
-            . "            \$condicoes[] = '{$campo[0]} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;\n"
-            . "            \$parametros[] = Sql::comoLike((string) \$filtro);\n"
-            . "        }\n";
+            . ($exato
+                ? "            \$condicoes[] = '{$nome} = ?';\n            \$parametros[] = \$filtro;\n"
+                : "            \$condicoes[] = '{$nome} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;\n            \$parametros[] = Sql::comoLike((string) \$filtro);\n")
+            . "        }\n\n";
     }
 
-    $metodoRelatorio = "    public function relatorio(): void\n    {\n        \$this->exigirAutenticacao();\n\n        \$condicoes = [];\n        \$parametros = [];\n{$filtrosRelatorio}\n        \$sql = 'SELECT * FROM ' . \$this->modelo->tabela();\n        if (\$condicoes !== []) {\n            \$sql .= ' WHERE ' . implode(' AND ', \$condicoes);\n        }\n        \$sql .= ' ORDER BY id DESC';\n        \$registros = \$this->modelo->consultar(\$sql, \$parametros);\n        \$pdf = RelatorioPdf::conteudo('Relatorio de {$tabela}', [{$colunasRelatorio}], \$registros);\n        \$this->pdf(\$pdf, '{$pasta}.pdf');\n    }\n\n";
+    $colunas = implode(', ', array_merge(["'id'"], array_map(fn (array $c): string => "'{$c[0]}'", $campos)));
 
-    return "<?php\n\nnamespace Controllers;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Controller;\nuse Nucleo\\RelatorioPdf;\nuse Nucleo\\Sql;\n\nclass {$recurso}Controller extends Controller\n{\n    private {$classe} \$modelo;\n\n    public function __construct()\n    {\n        \$this->modelo = new {$classe}();\n    }\n\n    public function index(): void\n    {\n        \$this->view('{$pasta}/index', ['titulo' => '{$recurso}', 'registros' => \$this->modelo->todos()]);\n    }\n\n    public function criar(): void\n    {\n        \$this->view('{$pasta}/formulario', [\n            'titulo' => 'Novo {$classe}',\n            'registro' => null,{$relacoesView}\n        ]);\n    }\n\n    public function salvar(): void\n    {\n        \$id = \$this->modelo->criar([\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} criado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n    public function ver(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/ver', ['titulo' => '{$classe}', 'registro' => \$registro]);\n    }\n\n    public function editar(string \$id): void\n    {\n        \$registro = \$this->modelo->buscar(\$id);\n        if (\$registro === null) { \$this->naoEncontrado(); }\n        \$this->view('{$pasta}/formulario', [\n            'titulo' => 'Editar {$classe}',\n            'registro' => \$registro,{$relacoesView}\n        ]);\n    }\n\n    public function atualizar(string \$id): void\n    {\n        \$this->modelo->atualizar(\$id, [\n            {$dados}\n        ]);\n        \$this->mensagem('sucesso', '{$classe} atualizado com sucesso.');\n        \$this->redirecionar('{$pasta}/ver/' . \$id);\n    }\n\n{$metodoRelatorio}    public function excluir(string \$id): void\n    {\n        if (!\$this->modelo->excluir(\$id)) { \$this->naoEncontrado(); }\n        \$this->mensagem('sucesso', '{$classe} excluido com sucesso.');\n        \$this->redirecionar('{$pasta}');\n    }\n}\n";
-}
+    return strtr(<<<'PHP'
+        <?php
 
-function indexGerado(string $tabela, array $campos): string
-{
-    $cabecalhos = implode('', array_map(fn ($campo) => "        <th>{$campo[0]}</th>\n", $campos));
-    $celulas = implode('', array_map(fn ($campo) => "            <td><?= e(\$registro['{$campo[0]}'] ?? '') ?></td>\n", $campos));
-        return "<div class=\"d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4\"><div><h1 class=\"h3 mb-1\">{$tabela}</h1><p class=\"text-secondary mb-0\">Gerencie os registros cadastrados.</p></div><div class=\"d-flex flex-wrap gap-2\"><a class=\"btn btn-outline-secondary\" href=\"<?= url('{$tabela}/relatorio') ?>\">Relatorio PDF</a><a class=\"btn btn-primary\" href=\"<?= url('{$tabela}/criar') ?>\">Novo registro</a></div></div>\n<div class=\"card border-0 shadow-sm\"><div class=\"table-responsive\"><table class=\"table table-hover align-middle mb-0\"><thead class=\"table-light\"><tr><th>ID</th>\n{$cabecalhos}</tr></thead><tbody>\n<?php foreach (\$registros as \$registro): ?>\n<tr><td><a href=\"<?= url('{$tabela}/ver/' . \$registro['id']) ?>\"><?= e(\$registro['id']) ?></a></td>\n{$celulas}</tr>\n<?php endforeach ?>\n</tbody></table></div></div>\n";
-}
+        namespace Controllers;
 
-function formularioGerado(string $tabela, array $campos): string
-{
-    $inputs = [];
+        use Modelos\{{CLASSE}};
+        use Nucleo\Controller;
+        use Nucleo\RelatorioPdf;
+        use Nucleo\Sql;
 
-    foreach ($campos as $campo) {
-        [$nome, $tipo, $tabelaRelacionada] = array_pad($campo, 3, null);
+        class {{RECURSO}}Controller extends Controller
+        {
+            private {{CLASSE}} $modelo;
 
-        if ($tabelaRelacionada !== null) {
-            $inputs[] = "    <div class=\"col-md-6\"><label class=\"form-label\" for=\"{$nome}\">{$nome}</label><select class=\"form-select\" id=\"{$nome}\" name=\"{$nome}\"><option value=\"\">Selecione...</option><?php \$valorSelecionado = antigo('{$nome}', \$registro['{$nome}'] ?? ''); ?><?php foreach ((\$" . $tabelaRelacionada . " ?? []) as \$opcao): ?><option value=\"<?= e(\$opcao['id']) ?>\" <?= (string) \$valorSelecionado === (string) \$opcao['id'] ? 'selected' : '' ?>><?= e(\$opcao['nome'] ?? \$opcao['descricao'] ?? ('#' . \$opcao['id'])) ?></option><?php endforeach ?></select></div>";
-            continue;
+            public function __construct()
+            {
+                $this->modelo = new {{CLASSE}}();
+            }
+
+            /** GET /{{PASTA}} */
+            public function index(): void
+            {
+        {{GUARDA}}        $this->view('{{PASTA}}/index', [
+                    'titulo'    => '{{RECURSO}}',
+                    'registros' => $this->modelo->todos(),
+                ]);
+            }
+
+            /** GET /{{PASTA}}/criar */
+            public function criar(): void
+            {
+        {{GUARDA}}        $this->view('{{PASTA}}/formulario', [
+                    'titulo'   => 'Novo {{CLASSE}}',
+                    'registro' => null,{{RELACOES}}
+                ]);
+            }
+
+            /** POST /{{PASTA}}/salvar */
+            public function salvar(): void
+            {
+        {{GUARDA}}        $this->exigirFormularioValido();
+
+                $dados = [
+        {{DADOS}}
+                ];
+
+                $erros = $this->modelo->validar($dados);
+
+                if ($erros !== []) {
+                    $this->voltarComErros($erros, '{{PASTA}}/criar');
+                }
+
+                $id = $this->modelo->criar($dados);
+
+                $this->mensagem('sucesso', '{{CLASSE}} criado com sucesso.');
+                $this->redirecionar('{{PASTA}}/ver/' . $id);
+            }
+
+            /** GET /{{PASTA}}/ver/1 */
+            public function ver(string $id): void
+            {
+        {{GUARDA}}        $registro = $this->modelo->buscar($id);
+
+                if ($registro === null) {
+                    $this->naoEncontrado();
+                }
+
+                $this->view('{{PASTA}}/ver', [
+                    'titulo'   => '{{CLASSE}}',
+                    'registro' => $registro,
+                ]);
+            }
+
+            /** GET /{{PASTA}}/editar/1 */
+            public function editar(string $id): void
+            {
+        {{GUARDA}}        $registro = $this->modelo->buscar($id);
+
+                if ($registro === null) {
+                    $this->naoEncontrado();
+                }
+
+                $this->view('{{PASTA}}/formulario', [
+                    'titulo'   => 'Editar {{CLASSE}}',
+                    'registro' => $registro,{{RELACOES}}
+                ]);
+            }
+
+            /** POST /{{PASTA}}/atualizar/1 */
+            public function atualizar(string $id): void
+            {
+        {{GUARDA}}        $this->exigirFormularioValido();
+
+                if (!$this->modelo->existe($id)) {
+                    $this->naoEncontrado();
+                }
+
+                $dados = [
+        {{DADOS}}
+                ];
+
+                $erros = $this->modelo->validar($dados, $id);
+
+                if ($erros !== []) {
+                    $this->voltarComErros($erros, '{{PASTA}}/editar/' . $id);
+                }
+
+                $this->modelo->atualizar($id, $dados);
+
+                $this->mensagem('sucesso', '{{CLASSE}} atualizado com sucesso.');
+                $this->redirecionar('{{PASTA}}/ver/' . $id);
+            }
+
+            /**
+             * GET /{{PASTA}}/relatorio
+             *
+             * Cada campo da query string vira um filtro:
+             *     /{{PASTA}}/relatorio?{{CAMPO}}=teste
+             */
+            public function relatorio(): void
+            {
+        {{GUARDA}}        $condicoes  = [];
+                $parametros = [];
+
+        {{FILTROS}}        $sql = 'SELECT * FROM ' . $this->modelo->tabela();
+
+                if ($condicoes !== []) {
+                    $sql .= ' WHERE ' . implode(' AND ', $condicoes);
+                }
+
+                $sql .= ' ORDER BY id DESC';
+
+                $registros = $this->modelo->consultar($sql, $parametros);
+                $pdf = RelatorioPdf::conteudo('Relatorio de {{TABELA}}', [{{COLUNAS}}], $registros);
+
+                $this->pdf($pdf, '{{PASTA}}.pdf');
+            }
+
+            /**
+             * POST /{{PASTA}}/excluir/1
+             *
+             * So aceita POST com token: um link ou um <img> em outro site
+             * nao conseguem apagar registros.
+             */
+            public function excluir(string $id): void
+            {
+        {{GUARDA}}        $this->exigirFormularioValido();
+
+                if (!$this->modelo->excluir($id)) {
+                    $this->naoEncontrado();
+                }
+
+                $this->mensagem('sucesso', '{{CLASSE}} excluido com sucesso.');
+                $this->redirecionar('{{PASTA}}');
+            }
         }
-
-        $tipoHtml = match ($tipo) {
-            'integer', 'decimal' => 'number',
-            'date' => 'date',
-            'datetime' => 'datetime-local',
-            'time' => 'time',
-            'boolean' => 'checkbox',
-            default => 'text',
-        };
-        $inputs[] = "    <div class=\"col-md-6\"><label class=\"form-label\" for=\"{$nome}\">{$nome}</label><input class=\"form-control\" id=\"{$nome}\" type=\"{$tipoHtml}\" name=\"{$nome}\" value=\"<?= e(antigo('{$nome}', \$registro['{$nome}'] ?? '')) ?>\"></div>";
-    }
-
-    return "<div class=\"mb-4\"><h1 class=\"h3 mb-1\"><?= e(\$titulo) ?></h1><p class=\"text-secondary mb-0\">Preencha os dados abaixo.</p></div>\n<form class=\"card border-0 shadow-sm p-4\" method=\"post\" action=\"<?= url('{$tabela}/' . (\$registro ? 'atualizar/' . \$registro['id'] : 'salvar')) ?>\"><div class=\"row g-3\">\n" . implode("\n", $inputs) . "\n</div><div class=\"d-flex gap-2 mt-4\"><button class=\"btn btn-primary\" type=\"submit\">Salvar</button><a class=\"btn btn-outline-secondary\" href=\"<?= url('{$tabela}') ?>\">Cancelar</a></div>\n</form>\n";
+        PHP, [
+        '{{CLASSE}}'   => $classe,
+        '{{RECURSO}}'  => $recurso,
+        '{{PASTA}}'    => $pasta,
+        '{{TABELA}}'   => $tabela,
+        '{{GUARDA}}'   => $guarda,
+        '{{DADOS}}'    => $dados,
+        '{{RELACOES}}' => $relacoes,
+        '{{FILTROS}}'  => $filtros,
+        '{{COLUNAS}}'  => $colunas,
+        '{{CAMPO}}'    => $campos[0][0],
+    ]);
 }
 
-function verGerado(string $tabela, array $campos): string
+// =====================================================================
+// Geradores: views
+// =====================================================================
+
+function indexGerado(string $tabela, string $pasta, array $campos): string
 {
-    $linhas = implode("\n", array_map(fn ($campo) => "<dt>{$campo[0]}</dt><dd><?= e(\$registro['{$campo[0]}'] ?? '') ?></dd>", $campos));
-        return "<div class=\"d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4\"><h1 class=\"h3 mb-0\">Registro</h1><a class=\"btn btn-outline-secondary\" href=\"<?= url('{$tabela}') ?>\">Voltar</a></div><div class=\"card border-0 shadow-sm\"><dl class=\"row g-0 mb-0 p-4\">\n{$linhas}\n</dl></div>\n";
+    $cabecalhos = '';
+    $celulas    = '';
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        $cabecalhos .= "                <th>{$nome}</th>\n";
+        $celulas .= $tipo === 'boolean'
+            ? "                <td><?= e(sim_nao(\$registro['{$nome}'] ?? null)) ?></td>\n"
+            : "                <td><?= e(\$registro['{$nome}'] ?? '') ?></td>\n";
+    }
+
+    return strtr(<<<'HTML'
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+            <div>
+                <h1 class="h3 mb-1">{{TABELA}}</h1>
+                <p class="text-secondary mb-0">Gerencie os registros cadastrados.</p>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <a class="btn btn-outline-secondary" href="<?= url('{{PASTA}}/relatorio') ?>">Relatorio PDF</a>
+                <a class="btn btn-primary" href="<?= url('{{PASTA}}/criar') ?>">Novo registro</a>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+        {{CABECALHOS}}                <th class="text-end">Acoes</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($registros as $registro): ?>
+                    <tr>
+                        <td><a href="<?= url('{{PASTA}}/ver/' . $registro['id']) ?>"><?= e($registro['id']) ?></a></td>
+        {{CELULAS}}                <td class="text-end text-nowrap">
+                            <a class="btn btn-sm btn-outline-secondary" href="<?= url('{{PASTA}}/editar/' . $registro['id']) ?>">Editar</a>
+                            <form class="d-inline" method="post" action="<?= url('{{PASTA}}/excluir/' . $registro['id']) ?>" onsubmit="return confirm('Excluir este registro?')">
+                                <?= campo_csrf() ?>
+                                <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+                            </form>
+                        </td>
+                    </tr>
+                    <?php endforeach ?>
+                    <?php if ($registros === []): ?>
+                    <tr><td colspan="{{COLSPAN}}" class="text-center text-secondary py-4">Nenhum registro cadastrado.</td></tr>
+                    <?php endif ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        HTML, [
+        '{{TABELA}}'     => $tabela,
+        '{{PASTA}}'      => $pasta,
+        '{{CABECALHOS}}' => $cabecalhos,
+        '{{CELULAS}}'    => $celulas,
+        '{{COLSPAN}}'    => (string) (count($campos) + 2),
+    ]);
 }
 
-function testeModeloGerado(string $tabela, string $classe, array $campos): string
+function formularioGerado(string $pasta, array $campos): string
 {
-    $relacoes = relacoesUnicas($campos);
-    $colunas = implode(",\n            ", array_map(fn ($campo) => "{$campo[0]} " . tipoSqlTeste($campo[1]), $campos));
-    $chaves = array_map(fn ($campo) => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)", array_filter($campos, fn ($campo) => ($campo[2] ?? null) !== null));
-    $definicoes = implode(",\n            ", array_merge(array_map(fn ($campo) => "{$campo[0]} " . tipoSqlTeste($campo[1]), $campos), $chaves));
-    $dados = implode(",\n            ", array_map(function ($campo) {
-        $valor = ($campo[2] ?? null) !== null
-            ? "\$this->idsRelacoes['{$campo[0]}']"
-            : var_export(valorTeste($campo[1]), true);
+    $blocos = [];
 
-        return "'{$campo[0]}' => {$valor}";
-    }, $campos));
-    $campo = $campos[0][0];
-    $valorAtualizado = ($campos[0][2] ?? null) !== null
-        ? "\$this->idsRelacoesAtualizadas['{$campo}']"
-        : var_export(valorTeste($campos[0][1], true), true);
-    $prepararRelacoes = '';
-    $limparRelacoes = '';
-    $idsRelacoes = '';
-
-    foreach ($relacoes as $relacao) {
-        $tabelaRelacionada = $relacao[2];
-        $prepararRelacoes .= "        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabelaRelacionada} (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NULL)\");\n";
-        $limparRelacoes .= "        Database::conexao()->exec('DELETE FROM {$tabelaRelacionada}');\n";
-        $idsRelacoes .= "        Database::conexao()->exec(\"INSERT INTO {$tabelaRelacionada} (nome) VALUES ('Opcao 1'), ('Opcao 2')\");\n        \$this->idsRelacoes['{$relacao[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaRelacionada} ORDER BY id ASC LIMIT 1')->fetchColumn();\n        \$this->idsRelacoesAtualizadas['{$relacao[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaRelacionada} ORDER BY id DESC LIMIT 1')->fetchColumn();\n";
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        $blocos[] = $relacao !== null
+            ? campoRelacao($nome, $relacao)
+            : ($tipo === 'boolean' ? campoBoolean($nome) : campoSimples($nome, $tipo));
     }
 
-    $assertRelacoes = '';
-    foreach ($relacoes as $relacao) {
-        $tabelaRelacionada = $relacao[2];
-        $assertRelacoes .= "        \$opcoes = \$this->modelo->" . nomeMetodoRelacao($tabelaRelacionada) . "();\n        \$this->assertTotal(2, \$opcoes);\n        \$this->assertVerdadeiro(in_array(\$this->idsRelacoes['{$relacao[0]}'], array_column(\$opcoes, 'id'), true));\n";
-    }
+    return strtr(<<<'HTML'
+        <div class="mb-4">
+            <h1 class="h3 mb-1"><?= e($titulo) ?></h1>
+            <p class="text-secondary mb-0">Preencha os dados abaixo.</p>
+        </div>
 
-    return "<?php\n\nnamespace Testes\\Modelos;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Database;\nuse Testes\\Suporte\\TesteBase;\n\nclass {$classe}Test extends TesteBase\n{\n    private {$classe} \$modelo;\n    private array \$idsRelacoes = [];\n    private array \$idsRelacoesAtualizadas = [];\n\n    public function preparar(): void\n    {\n{$prepararRelacoes}        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabela} (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            {$definicoes}\n        )\");\n        Database::conexao()->exec('DELETE FROM {$tabela}');\n{$limparRelacoes}{$idsRelacoes}        \$this->modelo = new {$classe}();\n    }\n\n    public function testeExecutaCrudCompleto(): void\n    {\n        \$dados = [\n            {$dados}\n        ];\n{$assertRelacoes}        \$id = \$this->modelo->criar(\$dados);\n        \$registro = \$this->modelo->buscar(\$id);\n\n        \$this->assertVerdadeiro(\$id > 0);\n        \$this->assertIgual(\$dados['{$campo}'], \$registro['{$campo}']);\n        \$this->assertIgual(1, \$this->modelo->contar());\n\n        \$this->assertVerdadeiro(\$this->modelo->atualizar(\$id, ['{$campo}' => {$valorAtualizado}]));\n        \$this->assertIgual({$valorAtualizado}, \$this->modelo->buscar(\$id)['{$campo}']);\n        \$this->assertVerdadeiro(\$this->modelo->excluir(\$id));\n        \$this->assertNulo(\$this->modelo->buscar(\$id));\n    }\n}\n";
+        <form class="card border-0 shadow-sm p-4" method="post" action="<?= url('{{PASTA}}/' . ($registro ? 'atualizar/' . $registro['id'] : 'salvar')) ?>">
+            <?= campo_csrf() ?>
+            <div class="row g-3">
+        {{CAMPOS}}    </div>
+            <div class="d-flex gap-2 mt-4">
+                <button class="btn btn-primary" type="submit">Salvar</button>
+                <a class="btn btn-outline-secondary" href="<?= url('{{PASTA}}') ?>">Cancelar</a>
+            </div>
+        </form>
+        HTML, [
+        '{{PASTA}}'  => $pasta,
+        '{{CAMPOS}}' => implode('', $blocos),
+    ]);
 }
+
+function campoSimples(string $nome, string $tipo): string
+{
+    $tipoHtml = match ($tipo) {
+        'integer'  => 'number',
+        'decimal'  => 'number',
+        'date'     => 'date',
+        'datetime' => 'datetime-local',
+        'time'     => 'time',
+        default    => 'text',
+    };
+
+    $passo = $tipo === 'decimal' ? ' step="0.01"' : '';
+
+    if ($tipo === 'text') {
+        return strtr(<<<'HTML'
+                <div class="col-12">
+                    <label class="form-label" for="{{NOME}}">{{NOME}}</label>
+                    <textarea class="form-control <?= tem_erro('{{NOME}}') ? 'is-invalid' : '' ?>" id="{{NOME}}" name="{{NOME}}" rows="4"><?= e(antigo('{{NOME}}', $registro['{{NOME}}'] ?? '')) ?></textarea>
+                    <?php if ($mensagem = erro_de('{{NOME}}')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+                </div>
+
+            HTML, ['{{NOME}}' => $nome]);
+    }
+
+    return strtr(<<<'HTML'
+            <div class="col-md-6">
+                <label class="form-label" for="{{NOME}}">{{NOME}}</label>
+                <input class="form-control <?= tem_erro('{{NOME}}') ? 'is-invalid' : '' ?>" id="{{NOME}}" type="{{TIPO}}"{{PASSO}} name="{{NOME}}" value="<?= e(antigo('{{NOME}}', $registro['{{NOME}}'] ?? '')) ?>">
+                <?php if ($mensagem = erro_de('{{NOME}}')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+            </div>
+
+        HTML, [
+        '{{NOME}}'  => $nome,
+        '{{TIPO}}'  => $tipoHtml,
+        '{{PASSO}}' => $passo,
+    ]);
+}
+
+/**
+ * Checkbox com campo escondido antes dele.
+ *
+ * O navegador NAO envia nada quando a caixa esta desmarcada. O input
+ * hidden garante que o formulario sempre mande 0 ou 1, e nunca "on".
+ */
+function campoBoolean(string $nome): string
+{
+    return strtr(<<<'HTML'
+            <div class="col-md-6">
+                <label class="form-label" for="{{NOME}}">{{NOME}}</label>
+                <div class="form-check">
+                    <input type="hidden" name="{{NOME}}" value="0">
+                    <input class="form-check-input" id="{{NOME}}" type="checkbox" name="{{NOME}}" value="1" <?= antigo('{{NOME}}', $registro['{{NOME}}'] ?? '') ? 'checked' : '' ?>>
+                    <label class="form-check-label" for="{{NOME}}">Sim</label>
+                </div>
+                <?php if ($mensagem = erro_de('{{NOME}}')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+            </div>
+
+        HTML, ['{{NOME}}' => $nome]);
+}
+
+function campoRelacao(string $nome, string $tabelaPai): string
+{
+    return strtr(<<<'HTML'
+            <div class="col-md-6">
+                <label class="form-label" for="{{NOME}}">{{NOME}}</label>
+                <?php $selecionado = antigo('{{NOME}}', $registro['{{NOME}}'] ?? ''); ?>
+                <select class="form-select <?= tem_erro('{{NOME}}') ? 'is-invalid' : '' ?>" id="{{NOME}}" name="{{NOME}}">
+                    <option value="">Selecione...</option>
+                    <?php foreach ((${{PAI}} ?? []) as $opcao): ?>
+                        <option value="<?= e($opcao['id']) ?>" <?= (string) $selecionado === (string) $opcao['id'] ? 'selected' : '' ?>><?= e($opcao['nome'] ?? $opcao['descricao'] ?? ('#' . $opcao['id'])) ?></option>
+                    <?php endforeach ?>
+                </select>
+                <?php if ($mensagem = erro_de('{{NOME}}')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+            </div>
+
+        HTML, [
+        '{{NOME}}' => $nome,
+        '{{PAI}}'  => $tabelaPai,
+    ]);
+}
+
+function verGerado(string $pasta, array $campos): string
+{
+    $linhas = '';
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        $valor = $tipo === 'boolean'
+            ? "sim_nao(\$registro['{$nome}'] ?? null)"
+            : "\$registro['{$nome}'] ?? ''";
+
+        $linhas .= "        <dt class=\"col-sm-3\">{$nome}</dt>\n"
+            . "        <dd class=\"col-sm-9\"><?= e({$valor}) ?></dd>\n";
+    }
+
+    return strtr(<<<'HTML'
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+            <h1 class="h3 mb-0"><?= e($titulo) ?></h1>
+            <div class="d-flex flex-wrap gap-2">
+                <a class="btn btn-outline-secondary" href="<?= url('{{PASTA}}') ?>">Voltar</a>
+                <a class="btn btn-primary" href="<?= url('{{PASTA}}/editar/' . $registro['id']) ?>">Editar</a>
+                <form method="post" action="<?= url('{{PASTA}}/excluir/' . $registro['id']) ?>" onsubmit="return confirm('Excluir este registro?')">
+                    <?= campo_csrf() ?>
+                    <button class="btn btn-outline-danger" type="submit">Excluir</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm">
+            <dl class="row g-0 mb-0 p-4">
+                <dt class="col-sm-3">id</dt>
+                <dd class="col-sm-9"><?= e($registro['id']) ?></dd>
+        {{LINHAS}}    </dl>
+        </div>
+        HTML, [
+        '{{PASTA}}'  => $pasta,
+        '{{LINHAS}}' => $linhas,
+    ]);
+}
+
+// =====================================================================
+// Geradores: testes
+// =====================================================================
 
 function tipoSqlTeste(string $tipo): string
 {
     return match ($tipo) {
         'integer', 'boolean' => 'INTEGER',
-        'decimal' => 'REAL',
-        default => 'TEXT',
+        'decimal'            => 'REAL',
+        default              => 'TEXT',
     } . ' NULL';
-}
-
-function testeControllerGeradoBase(string $tabela, string $classe, string $recurso, string $pasta, array $campos): string
-{
-    $relacoes = relacoesUnicas($campos);
-    $chaves = array_map(fn ($campo) => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)", array_filter($campos, fn ($campo) => ($campo[2] ?? null) !== null));
-    $definicoes = implode(",\n            ", array_merge(array_map(fn ($campo) => "{$campo[0]} " . tipoSqlTeste($campo[1]), $campos), $chaves));
-    $dados = implode(",\n            ", array_map(function ($campo) {
-        $valor = ($campo[2] ?? null) !== null
-            ? "\$this->idsRelacoes['{$campo[0]}']"
-            : var_export(valorTeste($campo[1]), true);
-
-        return "'{$campo[0]}' => {$valor}";
-    }, $campos));
-    $dadosAtualizados = implode(",\n            ", array_map(function ($campo) {
-        $valor = ($campo[2] ?? null) !== null
-            ? "\$this->idsRelacoesAtualizadas['{$campo[0]}']"
-            : var_export(valorTeste($campo[1], true), true);
-
-        return "'{$campo[0]}' => {$valor}";
-    }, $campos));
-    $campoPrincipal = $campos[0][0];
-    $valorInicial = ($campos[0][2] ?? null) !== null
-        ? "\$this->idsRelacoes['{$campoPrincipal}']"
-        : var_export(valorTeste($campos[0][1]), true);
-    $valorAtualizado = ($campos[0][2] ?? null) !== null
-        ? "\$this->idsRelacoesAtualizadas['{$campoPrincipal}']"
-        : var_export(valorTeste($campos[0][1], true), true);
-    $prepararRelacoes = '';
-    $limparRelacoes = '';
-    $idsRelacoes = '';
-
-    foreach ($relacoes as $relacao) {
-        $tabelaRelacionada = $relacao[2];
-        $prepararRelacoes .= "        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabelaRelacionada} (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NULL)\");\n";
-        $limparRelacoes .= "        \$this->limparTabela('{$tabelaRelacionada}');\n";
-        $idsRelacoes .= "        Database::conexao()->exec(\"INSERT INTO {$tabelaRelacionada} (nome) VALUES ('Opcao 1'), ('Opcao 2')\");\n        \$this->idsRelacoes['{$relacao[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaRelacionada} ORDER BY id ASC LIMIT 1')->fetchColumn();\n        \$this->idsRelacoesAtualizadas['{$relacao[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaRelacionada} ORDER BY id DESC LIMIT 1')->fetchColumn();\n";
-    }
-
-    return "<?php\n\nnamespace Testes\\Controllers;\n\nuse Modelos\\{$classe};\nuse Nucleo\\Database;\nuse Testes\\Suporte\\TesteBase;\n\nclass {$recurso}ControllerTest extends TesteBase\n{\n    private {$classe} \$modelo;\n    private array \$idsRelacoes = [];\n    private array \$idsRelacoesAtualizadas = [];\n\n    public function preparar(): void\n    {\n{$prepararRelacoes}        Database::conexao()->exec(\"CREATE TABLE IF NOT EXISTS {$tabela} (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            {$definicoes}\n        )\");\n        \$this->limparTabela('{$tabela}');\n{$limparRelacoes}{$idsRelacoes}        \$this->modelo = new {$classe}();\n    }\n\n    public function testeExecutaRotasDoCrud(): void\n    {\n        \$lista = \$this->requisitar('{$pasta}');\n        \$this->assertIgual(200, \$lista->status);\n        \$this->assertContem('{$campoPrincipal}', \$lista->html);\n\n        \$formulario = \$this->requisitar('{$pasta}/criar');\n        \$this->assertIgual(200, \$formulario->status);\n        \$this->assertContem('Salvar', \$formulario->html);\n\n        \$salvar = \$this->postar('{$pasta}/salvar', [\n            {$dados}\n        ]);\n        \$this->assertVerdadeiro(\$salvar->redirecionouPara('{$pasta}/ver/1'));\n\n        \$registro = \$this->modelo->todos()[0] ?? null;\n        \$this->assertNaoNulo(\$registro);\n        \$id = (int) \$registro['id'];\n        \$this->assertIgual({$valorInicial}, \$registro['{$campoPrincipal}']);\n\n        \$ver = \$this->requisitar('{$pasta}/ver/' . \$id);\n        \$this->assertIgual(200, \$ver->status);\n        \$this->assertContem((string) \$registro['{$campoPrincipal}'], \$ver->html);\n\n        \$editar = \$this->requisitar('{$pasta}/editar/' . \$id);\n        \$this->assertIgual(200, \$editar->status);\n        \$this->assertContem('Editar {$classe}', \$editar->html);\n\n        \$atualizar = \$this->postar('{$pasta}/atualizar/' . \$id, [\n            {$dadosAtualizados}\n        ]);\n        \$this->assertVerdadeiro(\$atualizar->redirecionouPara('{$pasta}/ver/' . \$id));\n        \$registroAtualizado = \$this->modelo->buscar(\$id);\n        \$this->assertIgual({$valorAtualizado}, \$registroAtualizado['{$campoPrincipal}']);\n\n        \$excluir = \$this->requisitar('{$pasta}/excluir/' . \$id);\n        \$this->assertVerdadeiro(\$excluir->redirecionouPara('{$pasta}'));\n        \$this->assertNulo(\$this->modelo->buscar(\$id));\n    }\n}\n";
-}
-
-function testeControllerGerado(string $tabela, string $classe, string $recurso, string $pasta, array $campos): string
-{
-    $conteudo = testeControllerGeradoBase($tabela, $classe, $recurso, $pasta, $campos);
-    $conteudo = str_replace(
-        "use Nucleo\\Database;\nuse Testes\\Suporte\\TesteBase;",
-        "use Nucleo\\Database;\nuse Nucleo\\Sessao;\nuse Testes\\Suporte\\TesteBase;",
-        $conteudo
-    );
-    $conteudo = str_replace(
-        "    public function preparar(): void\n    {",
-        "    public function preparar(): void\n    {\n        \$this->limparSessao();",
-        $conteudo
-    );
-    $campoPrincipal = $campos[0][0];
-    $conteudo = str_replace(
-        "        \$this->assertContem('{$campoPrincipal}', \$lista->html);",
-        "        \$this->assertContem('{$campoPrincipal}', \$lista->html);\n"
-            . "        \$this->assertContem('{$pasta}/relatorio', \$lista->html);",
-        $conteudo
-    );
-
-    $valorAtualizado = ($campos[0][2] ?? null) !== null
-        ? "\$this->idsRelacoesAtualizadas['{$campoPrincipal}']"
-        : var_export(valorTeste($campos[0][1], true), true);
-    $marcador = "        \$registroAtualizado = \$this->modelo->buscar(\$id);\n"
-        . "        \$this->assertIgual({$valorAtualizado}, \$registroAtualizado['{$campoPrincipal}']);";
-    $relatorio = "        \$semLogin = \$this->requisitar('{$pasta}/relatorio');\n"
-        . "        \$this->assertVerdadeiro(\$semLogin->redirecionouPara('auth/login'));\n\n"
-        . "        Sessao::definir('autenticacao_id', 1);\n"
-        . "        \$relatorio = \$this->requisitar('{$pasta}/relatorio', 'GET', [\n"
-        . "            '{$campoPrincipal}' => {$valorAtualizado},\n"
-        . "        ]);\n"
-        . "        \$this->assertIgual(200, \$relatorio->status);\n"
-        . "        \$this->assertContem('%PDF-1.4', \$relatorio->html);\n"
-        . "        \$this->assertContem('Relatorio de {$tabela}', \$relatorio->html);";
-    $conteudo = str_replace($marcador, $marcador . "\n\n" . $relatorio, $conteudo);
-
-    return $conteudo;
 }
 
 function valorTeste(string $tipo, bool $atualizado = false): mixed
 {
     return match ($tipo) {
-        'integer' => $atualizado ? 2 : 1,
-        'decimal' => $atualizado ? 20.5 : 10.5,
-        'boolean' => $atualizado ? 0 : 1,
-        'date' => $atualizado ? '2026-02-02' : '2026-01-01',
+        'integer'  => $atualizado ? 2 : 1,
+        'decimal'  => $atualizado ? 20.5 : 10.5,
+        'boolean'  => $atualizado ? 0 : 1,
+        'date'     => $atualizado ? '2026-02-02' : '2026-01-01',
         'datetime' => $atualizado ? '2026-02-02 12:00:00' : '2026-01-01 10:00:00',
-        'time' => $atualizado ? '12:00:00' : '10:00:00',
-        default => $atualizado ? 'Atualizado' : 'Teste',
+        'time'     => $atualizado ? '12:00:00' : '10:00:00',
+        default    => $atualizado ? 'Atualizado' : 'Teste',
     };
 }
 
-function esquema(string $tabela, array $campos, bool $mysql): string
+/** Valor de um campo dentro do teste (relacoes usam o id criado no preparar). */
+function valorNoTeste(array $campo, bool $atualizado = false): string
 {
-    $colunas = array_map(fn ($campo) => "{$campo[0]} " . tipoSql($campo[1], $mysql) . ' NULL', $campos);
-    $chaves = array_map(fn ($campo) => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)", array_filter($campos, fn ($campo) => ($campo[2] ?? null) !== null));
-    $definicoes = implode(",\n    ", array_merge($colunas, $chaves));
-
-    return $mysql ? "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INT AUTO_INCREMENT PRIMARY KEY,\n    {$definicoes}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n" : "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    {$definicoes}\n);\n";
-}
-
-function gerarRelatorioPdf(array $argumentos): void
-{
-    if (count($argumentos) < 1 || count($argumentos) > 2) {
-        throw new InvalidArgumentException('Uso: php console.php relatorio:pdf modelo|tabela [arquivo.pdf]');
+    if (($campo[2] ?? null) !== null) {
+        return $atualizado
+            ? "\$this->idsRelacoesAtualizadas['{$campo[0]}']"
+            : "\$this->idsRelacoes['{$campo[0]}']";
     }
 
-    $modelo = resolverModeloRelatorio($argumentos[0]);
-    $registros = $modelo['instancia']->todos();
-    $colunas = $registros === [] ? colunasDaTabela($modelo['tabela']) : array_keys($registros[0]);
-    $arquivo = caminhoRelatorioPdf($argumentos[1] ?? "relatorios/{$modelo['tabela']}.pdf");
-
-    RelatorioPdf::gerar("Relatorio de {$modelo['tabela']}", $colunas, $registros, $arquivo);
-
-    echo "Relatorio PDF criado: {$arquivo}\n";
+    return var_export(valorTeste($campo[1], $atualizado), true);
 }
 
-function resolverModeloRelatorio(string $alvo): array
+function listaDeDados(array $campos, bool $atualizado = false, ?string $zerar = null): string
 {
-    if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $alvo)) {
-        throw new InvalidArgumentException("Modelo ou tabela invalido: {$alvo}");
-    }
+    $linhas = array_map(function (array $campo) use ($atualizado, $zerar): string {
+        $valor = $campo[0] === $zerar ? "''" : valorNoTeste($campo, $atualizado);
 
-    $candidatos = array_unique([
-        pascal($alvo),
-        classeDaTabela(strtolower($alvo)),
-    ]);
+        return "            '{$campo[0]}' => {$valor},";
+    }, $campos);
 
-    foreach ($candidatos as $classe) {
-        $arquivo = CAMINHO_MODELOS . "/{$classe}.php";
+    return implode("\n", $linhas);
+}
 
-        if (!is_file($arquivo)) {
+/**
+ * Monta o array de tabelas que o teste passa para recriarTabelas():
+ * primeiro as tabelas pai (versao minima), depois a tabela do recurso.
+ *
+ * Recriar, em vez de "CREATE TABLE IF NOT EXISTS", garante que o resultado
+ * nao dependa da ordem em que as classes de teste rodam.
+ */
+function tabelasDoTeste(string $tabela, array $campos): string
+{
+    $linhas = [];
+
+    foreach (relacoesUnicas($campos) as $campo) {
+        if ($campo[2] === $tabela) {
             continue;
         }
 
-        $nomeCompleto = "Modelos\\{$classe}";
-        if (!class_exists($nomeCompleto)) {
-            throw new RuntimeException("Nao foi possivel carregar o modelo: {$nomeCompleto}");
-        }
-
-        $instancia = new $nomeCompleto();
-        if (!$instancia instanceof \Nucleo\Model) {
-            throw new RuntimeException("O modelo {$nomeCompleto} deve herdar de Nucleo\\Model.");
-        }
-
-        return [
-            'classe' => $classe,
-            'tabela' => $instancia->tabela(),
-            'instancia' => $instancia,
-        ];
+        $linhas[] = "            '{$campo[2]}' => 'CREATE TABLE {$campo[2]} (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NULL)',";
     }
 
-    throw new RuntimeException("Modelo nao encontrado: {$alvo}. Gere-o antes com scaffold:crud.");
+    $linhas[] = "            '{$tabela}' => \"CREATE TABLE {$tabela} (\n"
+        . "                id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+        . '                ' . definicoesDaTabelaDeTeste($tabela, $campos) . "\n"
+        . '            )",';
+
+    return implode("\n", $linhas);
 }
 
-function caminhoRelatorioPdf(string $caminho): string
+/** Popula as tabelas pai e guarda os ids usados pelos testes. */
+function idsDasRelacoes(array $campos): string
 {
-    if ($caminho === '') {
-        throw new InvalidArgumentException('O arquivo do relatorio nao pode ser vazio.');
+    $ids = '';
+
+    foreach (relacoesUnicas($campos) as $campo) {
+        $pai = $campo[2];
+
+        $ids .= "\n        Database::conexao()->exec(\"INSERT INTO {$pai} (nome) VALUES ('Opcao 1'), ('Opcao 2')\");\n"
+            . "        \$this->idsRelacoes['{$campo[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$pai} ORDER BY id ASC LIMIT 1')->fetchColumn();\n"
+            . "        \$this->idsRelacoesAtualizadas['{$campo[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$pai} ORDER BY id DESC LIMIT 1')->fetchColumn();";
     }
 
-    if ($caminho[0] === '/') {
-        return $caminho;
-    }
-
-    return CAMINHO_RAIZ . '/' . ltrim($caminho, '/');
+    return $ids;
 }
+
+function definicoesDaTabelaDeTeste(string $tabela, array $campos): string
+{
+    $colunas = array_map(
+        fn (array $campo): string => "{$campo[0]} " . tipoSqlTeste($campo[1]),
+        $campos
+    );
+
+    $chaves = array_map(
+        fn (array $campo): string => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)",
+        array_filter($campos, fn (array $campo): bool => ($campo[2] ?? null) !== null)
+    );
+
+    return implode(",\n                ", array_merge($colunas, $chaves));
+}
+
+function testeModeloGerado(string $tabela, string $classe, array $campos): string
+{
+    $principal = $campos[0][0];
+    $conferirRelacoes = '';
+
+    foreach (relacoesUnicas($campos) as $campo) {
+        $conferirRelacoes .= "        \$opcoes = \$this->modelo->{$campo[2]}();\n"
+            . "        \$this->assertTotal(2, \$opcoes);\n"
+            . "        \$this->assertVerdadeiro(in_array(\$this->idsRelacoes['{$campo[0]}'], array_column(\$opcoes, 'id'), true));\n\n";
+    }
+
+    return strtr(<<<'PHP'
+        <?php
+
+        namespace Testes\Modelos;
+
+        use Modelos\{{CLASSE}};
+        use Nucleo\Database;
+        use Testes\Suporte\TesteBase;
+
+        class {{CLASSE}}Test extends TesteBase
+        {
+            private {{CLASSE}} $modelo;
+            private array $idsRelacoes = [];
+            private array $idsRelacoesAtualizadas = [];
+
+            public function preparar(): void
+            {
+                // Cada teste monta as proprias tabelas: a ordem em que as
+                // classes rodam nao interfere no resultado.
+                $this->recriarTabelas([
+        {{TABELAS}}
+                ]);
+        {{IDS_RELACOES}}
+
+                $this->modelo = new {{CLASSE}}();
+            }
+
+            public function testeExecutaCrudCompleto(): void
+            {
+                $dados = [
+        {{DADOS}}
+                ];
+
+        {{CONFERIR_RELACOES}}        $id = $this->modelo->criar($dados);
+                $registro = $this->modelo->buscar($id);
+
+                $this->assertVerdadeiro($id > 0);
+                $this->assertIgual($dados['{{PRINCIPAL}}'], $registro['{{PRINCIPAL}}']);
+                $this->assertIgual(1, $this->modelo->contar());
+
+                $this->assertVerdadeiro($this->modelo->atualizar($id, ['{{PRINCIPAL}}' => {{ATUALIZADO}}]));
+                $this->assertIgual({{ATUALIZADO}}, $this->modelo->buscar($id)['{{PRINCIPAL}}']);
+
+                $this->assertVerdadeiro($this->modelo->excluir($id));
+                $this->assertNulo($this->modelo->buscar($id));
+            }
+
+            public function testeValidaOsCamposObrigatorios(): void
+            {
+                $dados = [
+        {{DADOS_INVALIDOS}}
+                ];
+
+                $erros = $this->modelo->validar($dados);
+
+                $this->assertNaoVazio($erros);
+                $this->assertTemChave('{{PRINCIPAL}}', $erros);
+            }
+        }
+        PHP, [
+        '{{CLASSE}}'            => $classe,
+        '{{TABELA}}'            => $tabela,
+        '{{TABELAS}}'           => tabelasDoTeste($tabela, $campos),
+        '{{IDS_RELACOES}}'      => idsDasRelacoes($campos),
+        '{{CONFERIR_RELACOES}}' => $conferirRelacoes,
+        '{{DADOS}}'             => listaDeDados($campos),
+        '{{DADOS_INVALIDOS}}'   => listaDeDados($campos, false, $principal),
+        '{{PRINCIPAL}}'         => $principal,
+        '{{ATUALIZADO}}'        => valorNoTeste($campos[0], true),
+    ]);
+}
+
+function testeControllerGerado(
+    string $tabela,
+    string $classe,
+    string $recurso,
+    string $pasta,
+    array $campos,
+    string|false $provider
+): string {
+    $principal = $campos[0][0];
+
+    $entrar = $provider === false
+        ? ''
+        : "        Sessao::definir(Sessao::chaveAutenticacao(" . ($provider === '' ? '' : "'{$provider}'") . "), 1);\n";
+
+    $rotaLogin = $provider === false
+        ? ''
+        : ($provider === '' ? 'auth/login' : 'auth-' . str_replace('_', '-', $provider) . '/login');
+
+    $testeLogin = $provider === false ? '' : strtr(<<<'PHP'
+
+
+            public function testeExigeLoginNasRotas(): void
+            {
+                $this->limparSessao();
+
+                $semLogin = $this->requisitar('{{PASTA}}');
+
+                $this->assertVerdadeiro($semLogin->redirecionouPara('{{ROTA_LOGIN}}'));
+            }
+        PHP, ['{{PASTA}}' => $pasta, '{{ROTA_LOGIN}}' => $rotaLogin]);
+
+    return strtr(<<<'PHP'
+        <?php
+
+        namespace Testes\Controllers;
+
+        use Modelos\{{CLASSE}};
+        use Nucleo\Database;
+        use Nucleo\Sessao;
+        use Testes\Suporte\TesteBase;
+
+        class {{RECURSO}}ControllerTest extends TesteBase
+        {
+            private {{CLASSE}} $modelo;
+            private array $idsRelacoes = [];
+            private array $idsRelacoesAtualizadas = [];
+
+            public function preparar(): void
+            {
+                $this->limparSessao();
+
+                // Cada teste monta as proprias tabelas: a ordem em que as
+                // classes rodam nao interfere no resultado.
+                $this->recriarTabelas([
+        {{TABELAS}}
+                ]);
+        {{IDS_RELACOES}}
+
+                $this->modelo = new {{CLASSE}}();
+        {{ENTRAR}}    }
+
+            public function testeExecutaRotasDoCrud(): void
+            {
+                $lista = $this->requisitar('{{PASTA}}');
+                $this->assertIgual(200, $lista->status);
+                $this->assertContem('{{PRINCIPAL}}', $lista->html);
+                $this->assertContem('{{PASTA}}/relatorio', $lista->html);
+
+                $formulario = $this->requisitar('{{PASTA}}/criar');
+                $this->assertIgual(200, $formulario->status);
+                $this->assertContem('Salvar', $formulario->html);
+
+                $salvar = $this->postar('{{PASTA}}/salvar', [
+        {{DADOS}}
+                ]);
+                $this->assertVerdadeiro($salvar->redirecionouPara('{{PASTA}}/ver/1'));
+
+                $registro = $this->modelo->todos()[0] ?? null;
+                $this->assertNaoNulo($registro);
+
+                $id = (int) $registro['id'];
+                $this->assertIgual({{VALOR_INICIAL}}, $registro['{{PRINCIPAL}}']);
+
+                $ver = $this->requisitar('{{PASTA}}/ver/' . $id);
+                $this->assertIgual(200, $ver->status);
+                $this->assertContem('{{PASTA}}/editar/' . $id, $ver->html);
+
+                $editar = $this->requisitar('{{PASTA}}/editar/' . $id);
+                $this->assertIgual(200, $editar->status);
+                $this->assertContem('Editar {{CLASSE}}', $editar->html);
+
+                $atualizar = $this->postar('{{PASTA}}/atualizar/' . $id, [
+        {{DADOS_ATUALIZADOS}}
+                ]);
+                $this->assertVerdadeiro($atualizar->redirecionouPara('{{PASTA}}/ver/' . $id));
+                $this->assertIgual({{VALOR_ATUALIZADO}}, $this->modelo->buscar($id)['{{PRINCIPAL}}']);
+
+                $excluir = $this->postar('{{PASTA}}/excluir/' . $id);
+                $this->assertVerdadeiro($excluir->redirecionouPara('{{PASTA}}'));
+                $this->assertNulo($this->modelo->buscar($id));
+            }
+
+            public function testeRecusaDadosInvalidos(): void
+            {
+                $resposta = $this->postar('{{PASTA}}/salvar', [
+        {{DADOS_INVALIDOS}}
+                ]);
+
+                $this->assertVerdadeiro($resposta->redirecionouPara('{{PASTA}}/criar'));
+                $this->assertIgual(0, $this->modelo->contar());
+            }
+
+            public function testeRecusaFormularioSemToken(): void
+            {
+                $id = $this->modelo->criar([
+        {{DADOS}}
+                ]);
+
+                $semToken = $this->postarSemToken('{{PASTA}}/excluir/' . $id);
+
+                $this->assertVerdadeiro($semToken->foiRedirecionado());
+                $this->assertNaoNulo($this->modelo->buscar($id));
+            }
+
+            public function testeExclusaoNaoAceitaGet(): void
+            {
+                $id = $this->modelo->criar([
+        {{DADOS}}
+                ]);
+
+                $porGet = $this->requisitar('{{PASTA}}/excluir/' . $id);
+
+                $this->assertIgual(404, $porGet->status);
+                $this->assertNaoNulo($this->modelo->buscar($id));
+            }
+
+            public function testeGeraRelatorioEmPdf(): void
+            {
+                $this->modelo->criar([
+        {{DADOS}}
+                ]);
+
+                $relatorio = $this->requisitar('{{PASTA}}/relatorio', 'GET', [
+                    '{{PRINCIPAL}}' => {{VALOR_INICIAL}},
+                ]);
+
+                $this->assertIgual(200, $relatorio->status);
+                $this->assertContem('%PDF-1.4', $relatorio->html);
+                $this->assertContem('Relatorio de {{TABELA}}', $relatorio->html);
+            }{{TESTE_LOGIN}}
+        }
+        PHP, [
+        '{{CLASSE}}'            => $classe,
+        '{{RECURSO}}'           => $recurso,
+        '{{PASTA}}'             => $pasta,
+        '{{TABELA}}'            => $tabela,
+        '{{TABELAS}}'           => tabelasDoTeste($tabela, $campos),
+        '{{IDS_RELACOES}}'      => idsDasRelacoes($campos),
+        '{{ENTRAR}}'            => $entrar,
+        '{{DADOS}}'             => listaDeDados($campos),
+        '{{DADOS_ATUALIZADOS}}' => listaDeDados($campos, true),
+        '{{DADOS_INVALIDOS}}'   => listaDeDados($campos, false, $principal),
+        '{{PRINCIPAL}}'         => $principal,
+        '{{VALOR_INICIAL}}'     => valorNoTeste($campos[0]),
+        '{{VALOR_ATUALIZADO}}'  => valorNoTeste($campos[0], true),
+        '{{TESTE_LOGIN}}'       => $testeLogin,
+    ]);
+}
+
+// =====================================================================
+// auth:install
+// =====================================================================
 
 function gerarAutenticacao(array $argumentos): void
 {
-    if (count($argumentos) > 2) {
-        throw new InvalidArgumentException('Uso: php console.php auth:install [Modelo] [Prefixo]');
+    [$posicionais] = separarOpcoes($argumentos, []);
+
+    if (count($posicionais) > 2) {
+        throw new InvalidArgumentException(
+            "Uso: php console.php auth:install [Modelo|tabela] [Prefixo]\n"
+            . "Exemplos:\n"
+            . "  php console.php auth:install\n"
+            . "  php console.php auth:install Cliente\n"
+            . '  php console.php auth:install Professor professor'
+        );
     }
 
-    $modelo = resolverModeloAutenticacao($argumentos[0] ?? null);
-    $prefixo = normalizarPrefixoAutenticacao($argumentos[1] ?? null);
-    $rota = $prefixo === 'auth' ? 'auth' : 'auth-' . str_replace('_', '-', $prefixo);
-    $vista = $prefixo === 'auth' ? 'auth' : 'auth/' . $prefixo;
-    $controlador = $prefixo === 'auth'
-        ? 'AuthController'
-        : 'Auth' . pascal($prefixo) . 'Controller';
-    $chaveAutenticacao = $prefixo === 'auth'
-        ? 'autenticacao_id'
-        : 'autenticacao_' . $prefixo . '_id';
-    $chaveUsuario = $prefixo === 'auth'
-        ? 'usuario_id'
-        : 'usuario_' . $prefixo . '_id';
+    $modelo   = resolverModeloAutenticacao($posicionais[0] ?? null);
+    $provider = normalizarPrefixoAutenticacao($posicionais[1] ?? null);
 
-    validarArquivosAutenticacaoLivres($controlador, $vista);
+    $rota         = Nucleo\Autenticacao::rotaBase($provider);
+    $vista        = Nucleo\Autenticacao::pastaViews($provider);
+    $controlador  = Nucleo\Autenticacao::controlador($provider);
+    $chaveAuth    = Nucleo\Sessao::chaveAutenticacao($provider);
+    $chaveUsuario = Nucleo\Sessao::chaveUsuario($provider);
 
-    $campos = $modelo['novo']
-        ? [['nome', 'string', null], ['email', 'string', null], ['senha', 'string', null]]
-        : [['email', 'string', null], ['senha', 'string', null]];
+    $caminhos = [
+        CAMINHO_CONTROLLERS . "/{$controlador}.php",
+        CAMINHO_VIEWS . "/{$vista}/login.php",
+        CAMINHO_VIEWS . "/{$vista}/registrar.php",
+        CAMINHO_RAIZ . "/testes/controllers/{$controlador}Test.php",
+    ];
 
-    foreach ([false, true] as $mysql) {
-        $fallback = $modelo['novo'] ? esquemaAutenticacaoPadrao($mysql) : null;
-        atualizarEsquemaAutenticacao($modelo['tabela'], $campos, $mysql, $fallback);
+    if ($modelo['novo']) {
+        $caminhos[] = $modelo['arquivo'];
     }
 
-    Database::migrar();
-    sincronizarColunas($modelo['tabela'], $campos, ['email', 'senha']);
+    if (Nucleo\Autenticacao::instalado($provider)) {
+        throw new RuntimeException(sprintf(
+            "A tela de login /%s ja existe (controllers/%s.php).\n"
+            . "Para dar login a outra tabela, use um prefixo:\n"
+            . '  php console.php auth:install %s <prefixo>',
+            $rota,
+            $controlador,
+            $modelo['classe']
+        ));
+    }
+
+    conferirCaminhosLivres($caminhos);
+
+    // -------------------------------------------------------------
+    // 1. Banco de dados (com desfazer se algo falhar).
+    // -------------------------------------------------------------
+    $esquemas = lerEsquemas();
+
+    try {
+        foreach ([false, true] as $mysql) {
+            if ($modelo['novo']) {
+                registrarEsquema($modelo['tabela'], esquemaAutenticacaoPadrao($mysql), $mysql);
+            } else {
+                acrescentarColunasAoEsquema($modelo['tabela'], ['email', 'senha'], $mysql);
+            }
+        }
+
+        Database::migrar();
+        sincronizarColunas($modelo['tabela'], [['email', 'string', null], ['senha', 'string', null]]);
+    } catch (Throwable $e) {
+        restaurarEsquemas($esquemas);
+
+        throw $e;
+    }
+
     $colunas = colunasDaTabela($modelo['tabela']);
 
     foreach (['email', 'senha'] as $campo) {
         if (!in_array($campo, $colunas, true)) {
-            throw new RuntimeException("Nao foi possivel criar a coluna {$campo} na tabela {$modelo['tabela']}.");
+            restaurarEsquemas($esquemas);
+
+            throw new RuntimeException(
+                "Nao foi possivel criar a coluna \"{$campo}\" na tabela {$modelo['tabela']}."
+            );
         }
     }
 
+    garantirIndiceUnico($modelo['tabela'], 'email');
+
     $temNome = in_array('nome', $colunas, true);
 
-    if ($modelo['novo']) {
-        escrever(
-            CAMINHO_MODELOS . "/{$modelo['classe']}.php",
-            "<?php\n\nnamespace Modelos;\n\nuse Nucleo\\Autenticavel;\nuse Nucleo\\Model;\n\nclass {$modelo['classe']} extends Model\n{\n    use Autenticavel;\n\n    protected string \$tabela = '{$modelo['tabela']}';\n    protected array \$preenchiveis = ['nome', 'email', 'senha'];\n}\n"
-        );
-    } else {
-        tornarModeloAutenticavel($modelo['arquivo'], $temNome ? ['nome'] : []);
+    // -------------------------------------------------------------
+    // 2. Model: cria do zero ou adiciona o trait ao que ja existe.
+    // -------------------------------------------------------------
+    $modeloOriginal = $modelo['novo'] ? null : (string) file_get_contents($modelo['arquivo']);
+
+    try {
+        if (!$modelo['novo']) {
+            tornarModeloAutenticavel($modelo['arquivo']);
+        }
+
+        $arquivos = [
+            CAMINHO_CONTROLLERS . "/{$controlador}.php" => controllerAutenticacaoGerado(
+                $modelo['classe'],
+                $temNome,
+                $controlador,
+                $rota,
+                $vista,
+                $chaveAuth,
+                $chaveUsuario
+            ),
+            CAMINHO_VIEWS . "/{$vista}/login.php"     => viewLoginGerada($rota),
+            CAMINHO_VIEWS . "/{$vista}/registrar.php" => viewRegistroGerada($temNome, $rota),
+            CAMINHO_RAIZ . "/testes/controllers/{$controlador}Test.php" => testeAutenticacaoGerado(
+                $modelo['classe'],
+                $modelo['tabela'],
+                $controlador,
+                $rota,
+                $provider,
+                $temNome,
+                $colunas
+            ),
+        ];
+
+        if ($modelo['novo']) {
+            $arquivos = [$modelo['arquivo'] => modeloAutenticavelGerado($modelo['classe'], $modelo['tabela'])] + $arquivos;
+        }
+
+        escreverArquivos($arquivos);
+    } catch (Throwable $e) {
+        if ($modeloOriginal !== null) {
+            file_put_contents($modelo['arquivo'], $modeloOriginal, LOCK_EX);
+        }
+
+        restaurarEsquemas($esquemas);
+
+        throw $e;
     }
 
-    escrever(
-        CAMINHO_CONTROLLERS . "/{$controlador}.php",
-        controllerAutenticacaoGerado(
-            $modelo['classe'],
-            $temNome,
-            $controlador,
-            $rota,
-            $vista,
-            $chaveAutenticacao,
-            $chaveUsuario
-        )
-    );
-    escrever(CAMINHO_VIEWS . "/{$vista}/login.php", viewLoginAutenticacaoGerada($rota));
-    escrever(CAMINHO_VIEWS . "/{$vista}/registrar.php", viewRegistroAutenticacaoGerada($temNome, $rota));
+    echo "Autenticacao aplicada ao modelo {$modelo['classe']}.\n";
 
-    echo "Autenticacao aplicada ao modelo {$modelo['classe']}: /{$rota}/login\n";
+    foreach (array_keys($arquivos) as $caminho) {
+        echo '  ' . ($modelo['novo'] && $caminho === $modelo['arquivo'] ? '+' : '+') . ' ' . caminhoRelativo($caminho) . "\n";
+    }
+
+    if (!$modelo['novo']) {
+        echo '  ~ ' . caminhoRelativo($modelo['arquivo']) . "\n";
+    }
+
+    echo '  ~ banco/esquema.sqlite.sql, banco/esquema.mysql.sql' . "\n\n";
+    echo "Rotas:\n";
+    echo "  /{$rota}/registrar   cria uma conta\n";
+    echo "  /{$rota}/login       entra\n";
+    echo "  /{$rota}/sair        encerra a sessao\n\n";
+    echo 'Para exigir login em um CRUD: php console.php scaffold:crud <tabela> ... --auth'
+        . ($provider === '' ? '' : "={$provider}") . "\n";
+    echo "Rode os testes com: php testes/executar.php {$controlador}\n";
 }
 
 function normalizarPrefixoAutenticacao(?string $prefixo): string
 {
-    if ($prefixo === null || trim($prefixo) === '') {
-        return 'auth';
+    if ($prefixo === null || trim($prefixo) === '' || strtolower(trim($prefixo)) === 'auth') {
+        return Nucleo\Autenticacao::PADRAO;
     }
 
     $prefixo = strtolower(trim($prefixo));
+
     if (!preg_match('/^[a-z][a-z0-9_-]*$/', $prefixo)) {
-        throw new InvalidArgumentException("Prefixo de autenticacao invalido: {$prefixo}");
+        throw new InvalidArgumentException(
+            "Prefixo de autenticacao invalido: \"{$prefixo}\".\n"
+            . 'Use apenas letras minusculas, numeros, "_" e "-", comecando por uma letra.'
+        );
     }
 
     return str_replace('-', '_', $prefixo);
@@ -558,28 +1785,26 @@ function normalizarPrefixoAutenticacao(?string $prefixo): string
 
 function resolverModeloAutenticacao(?string $alvo): array
 {
-    if ($alvo === null) {
-        $alvo = 'Usuario';
-    }
+    $alvo ??= 'Usuario';
 
     if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $alvo)) {
-        throw new InvalidArgumentException("Modelo invalido: {$alvo}");
+        throw new InvalidArgumentException(
+            "Modelo invalido: \"{$alvo}\". Informe o nome da classe (Cliente) ou da tabela (clientes)."
+        );
     }
 
     $arquivoUsuario = CAMINHO_MODELOS . '/Usuario.php';
+
     if (in_array(strtolower($alvo), ['usuario', 'usuarios'], true) && !is_file($arquivoUsuario)) {
         return [
-            'classe' => 'Usuario',
-            'tabela' => 'usuarios',
+            'classe'  => 'Usuario',
+            'tabela'  => 'usuarios',
             'arquivo' => $arquivoUsuario,
-            'novo' => true,
+            'novo'    => true,
         ];
     }
 
-    $candidatos = array_unique([
-        pascal($alvo),
-        classeDaTabela(strtolower($alvo)),
-    ]);
+    $candidatos = array_unique([pascal($alvo), classeDaTabela(strtolower($alvo))]);
 
     foreach ($candidatos as $classe) {
         $arquivo = CAMINHO_MODELOS . "/{$classe}.php";
@@ -589,172 +1814,208 @@ function resolverModeloAutenticacao(?string $alvo): array
         }
 
         $nomeCompleto = "Modelos\\{$classe}";
+
         if (!class_exists($nomeCompleto)) {
             throw new RuntimeException("Nao foi possivel carregar o modelo: {$nomeCompleto}");
         }
 
         $instancia = new $nomeCompleto();
-        if (!$instancia instanceof \Nucleo\Model) {
+
+        if (!$instancia instanceof Nucleo\Model) {
             throw new RuntimeException("O modelo {$nomeCompleto} deve herdar de Nucleo\\Model.");
         }
 
         return [
-            'classe' => $classe,
-            'tabela' => $instancia->tabela(),
+            'classe'  => $classe,
+            'tabela'  => $instancia->tabela(),
             'arquivo' => $arquivo,
-            'novo' => false,
+            'novo'    => false,
         ];
     }
 
-    throw new RuntimeException("Modelo nao encontrado: {$alvo}. Gere-o antes com scaffold:crud.");
+    $existentes = array_map(
+        fn (string $caminho): string => basename($caminho, '.php'),
+        glob(CAMINHO_MODELOS . '/*.php') ?: []
+    );
+
+    throw new RuntimeException(
+        "Modelo nao encontrado: \"{$alvo}\" (procurei por " . implode(' e ', $candidatos) . ").\n"
+        . ($existentes === []
+            ? "Ainda nao existe nenhum model. Gere um antes:\n  php console.php scaffold:crud clientes nome:string"
+            : 'Models disponiveis: ' . implode(', ', $existentes))
+    );
 }
 
-function validarArquivosAutenticacaoLivres(string $controlador, string $vista): void
+/**
+ * Acrescenta colunas ao CREATE TABLE que ja esta no arquivo de esquema.
+ *
+ * As colunas entram como NULL de proposito: a tabela pode ja ter registros
+ * e o CRUD gerado antes do login continua cadastrando sem e-mail e senha.
+ * Quem exige credenciais e o model (criarComSenha) e a tela de cadastro.
+ */
+function acrescentarColunasAoEsquema(string $tabela, array $colunas, bool $mysql): void
 {
-    $arquivos = [
-        CAMINHO_CONTROLLERS . "/{$controlador}.php",
-        CAMINHO_VIEWS . "/{$vista}/login.php",
-        CAMINHO_VIEWS . "/{$vista}/registrar.php",
-    ];
+    $arquivo  = arquivoEsquema($mysql);
+    $conteudo = is_file($arquivo) ? (string) file_get_contents($arquivo) : '';
+    $padrao   = padraoCreateTable($tabela);
 
-    foreach ($arquivos as $arquivo) {
-        if (is_file($arquivo)) {
-            throw new RuntimeException("Arquivo ja existe: {$arquivo}. A autenticacao ja foi instalada.");
-        }
-    }
-}
-
-function atualizarEsquemaAutenticacao(string $tabela, array $campos, bool $mysql, ?string $fallback): void
-{
-    $arquivo = CAMINHO_BANCO . '/esquema.' . ($mysql ? 'mysql' : 'sqlite') . '.sql';
-    if (!is_file($arquivo)) {
-        throw new RuntimeException("Arquivo de esquema nao encontrado: {$arquivo}");
+    if (!preg_match($padrao, $conteudo, $bloco)) {
+        throw new RuntimeException(
+            "A tabela \"{$tabela}\" nao esta em " . caminhoRelativo($arquivo) . ".\n"
+            . 'Gere o CRUD antes: php console.php scaffold:crud ' . $tabela . ' nome:string'
+        );
     }
 
-    $conteudo = file_get_contents($arquivo);
-    $padrao = '/(CREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+' . preg_quote($tabela, '/') . '\\s*\\()(.+?)(\\)\\s*(?:ENGINE\\s*=\\s*[^;]+)?;)/is';
-    $encontrou = false;
+    $original = $bloco[0];
+    $novo     = $original;
 
-    $atualizado = preg_replace_callback($padrao, function (array $correspondencia) use ($campos, &$encontrou, $mysql): string {
-        $encontrou = true;
-        $definicoes = rtrim($correspondencia[2]);
-        $definicoes = preg_replace(
-            '/(\b(?:email|senha)\s+[A-Za-z]+(?:\(\d+(?:,\d+)?\))?)\s+NULL\b/i',
-            '$1 NOT NULL',
-            $definicoes
-        ) ?? $definicoes;
-        $adicoes = [];
-
-        foreach ($campos as [$nome, $tipo]) {
-            if (!preg_match('/\\b' . preg_quote($nome, '/') . '\\b/i', $definicoes)) {
-                $adicoes[] = "{$nome} " . tipoSql($tipo, $mysql) . ' NOT NULL';
-            }
+    foreach ($colunas as $coluna) {
+        if (preg_match('/\b' . preg_quote($coluna, '/') . '\b/i', $novo)) {
+            continue;
         }
 
-        if ($adicoes !== []) {
-            $definicoes .= ",\n    " . implode(",\n    ", $adicoes);
-        }
+        $definicao = "{$coluna} " . tipoSql('string', $mysql) . ' NULL';
 
-        return $correspondencia[1]
-            . $definicoes
-            . "\n"
-            . $correspondencia[3];
-    }, $conteudo, 1);
-
-    if ($atualizado === null) {
-        throw new RuntimeException("Nao foi possivel atualizar o esquema da tabela {$tabela}.");
+        // Entra logo antes do parentese que fecha a definicao da tabela.
+        $novo = (string) preg_replace(
+            '/,?\s*\)(\s*(?:ENGINE\s*=\s*[^;]+)?;)$/is',
+            ",\n    {$definicao}\n)\$1",
+            $novo,
+            1
+        );
     }
 
-    if (!$encontrou) {
-        if ($fallback === null) {
-            throw new RuntimeException("Tabela {$tabela} nao encontrada no esquema do banco.");
-        }
-        $atualizado = rtrim($atualizado) . "\n\n" . $fallback;
+    if ($novo !== $original) {
+        file_put_contents($arquivo, str_replace($original, $novo, $conteudo), LOCK_EX);
     }
-
-    file_put_contents($arquivo, $atualizado, LOCK_EX);
 }
 
 function esquemaAutenticacaoPadrao(bool $mysql): string
 {
     return $mysql
-        ? "CREATE TABLE IF NOT EXISTS usuarios (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(100) NOT NULL, email VARCHAR(150) NOT NULL UNIQUE, senha VARCHAR(255) NOT NULL, criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n"
-        : "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, email TEXT NOT NULL UNIQUE, senha TEXT NOT NULL, criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);\n";
+        ? "CREATE TABLE IF NOT EXISTS usuarios (\n"
+            . "    id INT AUTO_INCREMENT PRIMARY KEY,\n"
+            . "    nome VARCHAR(100) NOT NULL,\n"
+            . "    email VARCHAR(150) NOT NULL UNIQUE,\n"
+            . "    senha VARCHAR(255) NOT NULL,\n"
+            . "    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\n"
+            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;'
+        : "CREATE TABLE IF NOT EXISTS usuarios (\n"
+            . "    id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+            . "    nome TEXT NOT NULL,\n"
+            . "    email TEXT NOT NULL UNIQUE,\n"
+            . "    senha TEXT NOT NULL,\n"
+            . "    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n"
+            . ');';
 }
 
-function tornarModeloAutenticavel(string $arquivo, array $camposAdicionais = []): void
+/**
+ * Acrescenta o trait Autenticavel a um model que ja existe, preservando a
+ * indentacao e a ordem dos "use" do arquivo.
+ */
+function tornarModeloAutenticavel(string $arquivo): void
 {
     $conteudo = file_get_contents($arquivo);
+
     if ($conteudo === false) {
-        throw new RuntimeException("Nao foi possivel ler o modelo: {$arquivo}");
+        throw new RuntimeException('Nao foi possivel ler o modelo: ' . caminhoRelativo($arquivo));
     }
 
-    if (!str_contains($conteudo, 'Nucleo\\Autenticavel')) {
+    if (!preg_match('/class\s+[A-Za-z]\w*\s+extends\s+[A-Za-z]\w*\s*\R?\s*\{/', $conteudo)) {
+        throw new RuntimeException(
+            'Nao encontrei a declaracao da classe em ' . caminhoRelativo($arquivo) . '.'
+        );
+    }
+
+    // 1. import: "use Nucleo\Autenticavel;" antes de "use Nucleo\Model;"
+    if (!preg_match('/^use\s+Nucleo\\\\Autenticavel;/m', $conteudo)) {
         $conteudo = preg_replace_callback(
-            '/use\\s+Nucleo\\\\Model;\\s*/',
-            fn (array $correspondencia): string => $correspondencia[0] . "use Nucleo\\Autenticavel;\n",
+            '/^use\s+Nucleo\\\\Model;/m',
+            fn (array $m): string => "use Nucleo\\Autenticavel;\n" . $m[0],
             $conteudo,
             1,
-            $quantidade
+            $trocas
         );
 
-        if ($quantidade !== 1 || $conteudo === null) {
-            throw new RuntimeException("Nao foi possivel preparar o modelo para autenticacao: {$arquivo}");
+        if ($trocas !== 1 || $conteudo === null) {
+            throw new RuntimeException(
+                'Nao encontrei "use Nucleo\\Model;" em ' . caminhoRelativo($arquivo) . '.'
+            );
         }
     }
 
-    if (!preg_match('/class\\s+[A-Za-z][A-Za-z0-9_]*\\s+extends\\s+[A-Za-z][A-Za-z0-9_]*\\s*\\{/', $conteudo)) {
-        throw new RuntimeException("Nao foi possivel localizar a classe no modelo: {$arquivo}");
-    }
-
-    if (!preg_match('/class\\s+[A-Za-z][A-Za-z0-9_]*\\s+extends\\s+[A-Za-z][A-Za-z0-9_]*\\s*\\{[^}]*?\\buse\\s+Autenticavel\\s*;/s', $conteudo)) {
+    // 2. trait dentro da classe, logo depois da chave de abertura.
+    if (!preg_match('/\{\s*use\s+Autenticavel\s*;/', $conteudo)) {
         $conteudo = preg_replace_callback(
-            '/(class\\s+[A-Za-z][A-Za-z0-9_]*\\s+extends\\s+[A-Za-z][A-Za-z0-9_]*\\s*\\{\\s*)/',
-            fn (array $correspondencia): string => $correspondencia[1] . "    use Autenticavel;\n\n",
+            '/(class\s+[A-Za-z]\w*\s+extends\s+[A-Za-z]\w*\s*\R\{\R)/',
+            fn (array $m): string => $m[1] . "    use Autenticavel;\n\n",
             $conteudo,
             1,
-            $quantidade
+            $trocas
         );
 
-        if ($quantidade !== 1 || $conteudo === null) {
-            throw new RuntimeException("Nao foi possivel ativar a autenticacao no modelo: {$arquivo}");
+        if ($trocas !== 1 || $conteudo === null) {
+            throw new RuntimeException(
+                'Nao consegui ativar o trait Autenticavel em ' . caminhoRelativo($arquivo) . '.'
+            );
         }
     }
 
-    $padraoPreenchiveis = '/protected\\s+array\\s+\\$preenchiveis\\s*=\\s*\\[(.*?)\\];/s';
-    if (preg_match($padraoPreenchiveis, $conteudo, $correspondencia)) {
-        preg_match_all("/['\"]([a-z][a-z0-9_]*)['\"]/", $correspondencia[1], $encontrados);
-        $campos = $encontrados[1] ?? [];
+    // 3. $preenchiveis ganha email e senha, mantendo a indentacao original.
+    $padrao = '/^([ \t]*)protected\s+array\s+\$preenchiveis\s*=\s*\[(.*?)\];/ms';
 
-        foreach (array_merge($camposAdicionais, ['email', 'senha']) as $campo) {
+    if (preg_match($padrao, $conteudo, $encontrado)) {
+        preg_match_all("/['\"]([a-z][a-z0-9_]*)['\"]/", $encontrado[2], $nomes);
+        $campos = $nomes[1] ?? [];
+
+        foreach (['email', 'senha'] as $campo) {
             if (!in_array($campo, $campos, true)) {
                 $campos[] = $campo;
             }
         }
 
-        $declaracao = 'protected array $preenchiveis = ['
-            . implode(', ', array_map(fn (string $campo): string => "'{$campo}'", $campos))
-            . '];';
-        $conteudo = preg_replace($padraoPreenchiveis, $declaracao, $conteudo, 1, $quantidade);
+        $lista = implode(', ', array_map(fn (string $c): string => "'{$c}'", $campos));
 
-        if ($quantidade !== 1 || $conteudo === null) {
-            throw new RuntimeException("Nao foi possivel atualizar os campos do modelo: {$arquivo}");
-        }
+        $conteudo = preg_replace_callback(
+            $padrao,
+            fn (array $m): string => $m[1] . 'protected array $preenchiveis = [' . $lista . '];',
+            $conteudo,
+            1
+        );
     } else {
         $conteudo = preg_replace_callback(
-            '/(class\\s+[A-Za-z][A-Za-z0-9_]*\\s+extends\\s+[A-Za-z][A-Za-z0-9_]*\\s*\\{\\s*)/',
-            fn (array $correspondencia): string => $correspondencia[1] . "    protected array \$preenchiveis = ['" . implode("', '", array_merge($camposAdicionais, ['email', 'senha'])) . "'];\n\n",
-            $conteudo,
-            1,
-            $quantidade
+            '/(    use Autenticavel;\R\R)/',
+            fn (array $m): string => $m[1] . "    protected array \$preenchiveis = ['email', 'senha'];\n\n",
+            (string) $conteudo,
+            1
         );
-
-        if ($quantidade !== 1 || $conteudo === null) {
-            throw new RuntimeException("Nao foi possivel adicionar os campos ao modelo: {$arquivo}");
-        }
     }
 
-    file_put_contents($arquivo, $conteudo, LOCK_EX);
+    file_put_contents($arquivo, (string) $conteudo, LOCK_EX);
+}
+
+function modeloAutenticavelGerado(string $classe, string $tabela): string
+{
+    return strtr(<<<'PHP'
+        <?php
+
+        namespace Modelos;
+
+        use Nucleo\Autenticavel;
+        use Nucleo\Model;
+
+        class {{CLASSE}} extends Model
+        {
+            use Autenticavel;
+
+            protected string $tabela = '{{TABELA}}';
+            protected array $preenchiveis = ['nome', 'email', 'senha'];
+            protected string $ordemPadrao = 'id DESC';
+        }
+        PHP, [
+        '{{CLASSE}}' => $classe,
+        '{{TABELA}}' => $tabela,
+    ]);
 }
 
 function controllerAutenticacaoGerado(
@@ -763,114 +2024,430 @@ function controllerAutenticacaoGerado(
     string $controlador,
     string $rota,
     string $vista,
-    string $chaveAutenticacao,
+    string $chaveAuth,
     string $chaveUsuario
-): string
-{
-    $validacaoNome = $temNome ? "\$this->post('nome', '') !== '' && " : '';
-    $dadosNome = $temNome ? "\n                    'nome' => \$this->post('nome')," : '';
+): string {
+    return strtr(<<<'PHP'
+        <?php
 
-    return str_replace(
-        [
-            '__CLASSE__',
-            '__CONTROLADOR__',
-            '__ROTA__',
-            '__VISTA__',
-            '__CHAVE_AUTENTICACAO__',
-            '__CHAVE_USUARIO__',
-            '__VALIDACAO_NOME__',
-            '__DADOS_NOME__',
-        ],
-        [
-            $classe,
-            $controlador,
-            $rota,
-            $vista,
-            $chaveAutenticacao,
-            $chaveUsuario,
-            $validacaoNome,
-            $dadosNome,
-        ],
-        <<<'PHP'
-<?php
+        namespace Controllers;
 
-namespace Controllers;
+        use Modelos\{{CLASSE}};
+        use Nucleo\Controller;
+        use Nucleo\Sessao;
+        use Nucleo\Validador;
 
-use Modelos\__CLASSE__;
-use Nucleo\Controller;
-use Nucleo\Sessao;
+        class {{CONTROLADOR}} extends Controller
+        {
+            private {{CLASSE}} $modelo;
 
-class __CONTROLADOR__ extends Controller
-{
-    private __CLASSE__ $modelo;
-
-    public function __construct()
-    {
-        $this->modelo = new __CLASSE__();
-    }
-
-    public function login(): void
-    {
-        if ($this->ehPost()) {
-            $email = (string) $this->post('email', '');
-            $senha = (string) $this->post('senha', '');
-            $registro = $this->modelo->autenticar($email, $senha);
-            if ($registro !== null) {
-                Sessao::definir('__CHAVE_AUTENTICACAO__', $registro['id']);
-                Sessao::definir('__CHAVE_USUARIO__', $registro['id']);
-                $this->redirecionar();
+            public function __construct()
+            {
+                $this->modelo = new {{CLASSE}}();
             }
-            $this->mensagem('erro', 'E-mail ou senha invalidos.');
-        }
-        $this->view('__VISTA__/login', ['titulo' => 'Entrar']);
-    }
 
-    public function registrar(): void
-    {
-        if ($this->ehPost()) {
-            $senha = (string) $this->post('senha', '');
-            $email = (string) $this->post('email', '');
-            if (__VALIDACAO_NOME__filter_var($email, FILTER_VALIDATE_EMAIL) && mb_strlen($senha) >= 6 && $this->modelo->buscarPorEmail($email) === null) {
-                $dados = [
-                    'email' => $email,__DADOS_NOME__
-                ];
-                $this->modelo->criarComSenha($dados, $senha);
-                $this->mensagem('sucesso', 'Conta criada. Agora entre com seus dados.');
-                $this->redirecionar('__ROTA__/login');
+            /** GET e POST /{{ROTA}}/login */
+            public function login(): void
+            {
+                if ($this->ehPost()) {
+                    $this->exigirTokenValido();
+
+                    $email = (string) $this->post('email', '');
+                    $senha = (string) $this->post('senha', '');
+
+                    $registro = $this->modelo->autenticar($email, $senha);
+
+                    if ($registro !== null) {
+                        // Troca o id da sessao: sem isso um id capturado antes
+                        // do login continuaria valendo depois ("session fixation").
+                        Sessao::regenerar();
+                        Sessao::definir('{{CHAVE_AUTH}}', $registro['id']);
+                        Sessao::definir('{{CHAVE_USUARIO}}', $registro['id']);
+
+                        $this->mensagem('sucesso', 'Bem-vindo!');
+                        $this->redirecionar();
+                    }
+
+                    Sessao::guardarEntrada(['email' => $email]);
+                    $this->mensagem('erro', 'E-mail ou senha invalidos.');
+                    $this->redirecionar('{{ROTA}}/login');
+                }
+
+                $this->view('{{VISTA}}/login', ['titulo' => 'Entrar']);
             }
-            $this->mensagem('erro', 'Preencha os dados corretamente.');
+
+            /** GET e POST /{{ROTA}}/registrar */
+            public function registrar(): void
+            {
+                if ($this->ehPost()) {
+                    $this->exigirTokenValido();
+
+                    $senha = (string) $this->post('senha', '');
+                    $dados = [{{CAMPO_NOME}}
+                        'email' => (string) $this->post('email', ''),
+                    ];
+
+                    $erros = (new Validador($dados + ['senha' => $senha])){{REGRA_NOME}}
+                        ->obrigatorio('email', 'e-mail')
+                        ->email('email', 'e-mail')
+                        ->obrigatorio('senha')
+                        ->minimo('senha', {{SENHA_MINIMA}})
+                        ->erros();
+
+                    if ($erros === [] && $this->modelo->buscarPorEmail($dados['email']) !== null) {
+                        $erros['email'] = 'Este e-mail ja esta cadastrado.';
+                    }
+
+                    if ($erros !== []) {
+                        $this->voltarComErros($erros, '{{ROTA}}/registrar');
+                    }
+
+                    // criarComSenha() aplica password_hash(): a senha nunca
+                    // chega ao banco em texto puro.
+                    $this->modelo->criarComSenha($dados, $senha);
+
+                    $this->mensagem('sucesso', 'Conta criada. Agora entre com seus dados.');
+                    $this->redirecionar('{{ROTA}}/login');
+                }
+
+                $this->view('{{VISTA}}/registrar', ['titulo' => 'Criar conta']);
+            }
+
+            /** GET /{{ROTA}}/sair */
+            public function sair(): void
+            {
+                Sessao::remover('{{CHAVE_AUTH}}');
+                Sessao::remover('{{CHAVE_USUARIO}}');
+                Sessao::regenerar();
+
+                $this->mensagem('sucesso', 'Sessao encerrada.');
+                $this->redirecionar('{{ROTA}}/login');
+            }
         }
-        $this->view('__VISTA__/registrar', ['titulo' => 'Criar conta']);
+        PHP, [
+        '{{CLASSE}}'         => $classe,
+        '{{CONTROLADOR}}'    => $controlador,
+        '{{ROTA}}'           => $rota,
+        '{{VISTA}}'          => $vista,
+        '{{CHAVE_AUTH}}'     => $chaveAuth,
+        '{{CHAVE_USUARIO}}'  => $chaveUsuario,
+        '{{CAMPO_NOME}}'     => $temNome ? "\n                'nome'  => (string) \$this->post('nome', '')," : '',
+        '{{REGRA_NOME}}'     => $temNome ? "\n                    ->obrigatorio('nome')" : '',
+        '{{SENHA_MINIMA}}'   => (string) Nucleo\Autenticacao::SENHA_MINIMA,
+    ]);
+}
+
+function viewLoginGerada(string $rota): string
+{
+    return strtr(<<<'HTML'
+        <div class="row justify-content-center">
+            <div class="col-12 col-md-7 col-lg-5">
+                <div class="card border-0 shadow-sm p-4">
+                    <h1 class="h3 mb-4">Entrar</h1>
+
+                    <form method="post" action="<?= url('{{ROTA}}/login') ?>">
+                        <?= campo_csrf() ?>
+                        <div class="mb-3">
+                            <label class="form-label" for="email">E-mail</label>
+                            <input class="form-control" id="email" type="email" name="email" autocomplete="email" value="<?= e(antigo('email')) ?>" required>
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label" for="senha">Senha</label>
+                            <input class="form-control" id="senha" type="password" name="senha" autocomplete="current-password" required>
+                        </div>
+                        <button class="btn btn-primary w-100" type="submit">Entrar</button>
+                    </form>
+
+                    <p class="text-center mt-4 mb-0">
+                        <a href="<?= url('{{ROTA}}/registrar') ?>">Criar uma conta</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+        HTML, ['{{ROTA}}' => $rota]);
+}
+
+function viewRegistroGerada(bool $temNome, string $rota): string
+{
+    $campoNome = $temNome ? <<<'HTML'
+                    <div class="mb-3">
+                            <label class="form-label" for="nome">Nome</label>
+                            <input class="form-control <?= tem_erro('nome') ? 'is-invalid' : '' ?>" id="nome" type="text" name="nome" autocomplete="name" value="<?= e(antigo('nome')) ?>" required>
+                            <?php if ($mensagem = erro_de('nome')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+                        </div>
+
+        HTML : '';
+
+    return strtr(<<<'HTML'
+        <div class="row justify-content-center">
+            <div class="col-12 col-md-7 col-lg-5">
+                <div class="card border-0 shadow-sm p-4">
+                    <h1 class="h3 mb-4">Criar conta</h1>
+
+                    <form method="post" action="<?= url('{{ROTA}}/registrar') ?>">
+                        <?= campo_csrf() ?>
+                        {{CAMPO_NOME}}<div class="mb-3">
+                            <label class="form-label" for="email">E-mail</label>
+                            <input class="form-control <?= tem_erro('email') ? 'is-invalid' : '' ?>" id="email" type="email" name="email" autocomplete="email" value="<?= e(antigo('email')) ?>" required>
+                            <?php if ($mensagem = erro_de('email')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label" for="senha">Senha</label>
+                            <input class="form-control <?= tem_erro('senha') ? 'is-invalid' : '' ?>" id="senha" type="password" name="senha" autocomplete="new-password" minlength="{{SENHA_MINIMA}}" required>
+                            <?php if ($mensagem = erro_de('senha')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+                        </div>
+                        <button class="btn btn-primary w-100" type="submit">Criar conta</button>
+                    </form>
+
+                    <p class="text-center mt-4 mb-0">
+                        <a href="<?= url('{{ROTA}}/login') ?>">Ja tenho uma conta</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+        HTML, [
+        '{{ROTA}}'         => $rota,
+        '{{CAMPO_NOME}}'   => $campoNome,
+        '{{SENHA_MINIMA}}' => (string) Nucleo\Autenticacao::SENHA_MINIMA,
+    ]);
+}
+
+function testeAutenticacaoGerado(
+    string $classe,
+    string $tabela,
+    string $controlador,
+    string $rota,
+    string $provider,
+    bool $temNome,
+    array $colunas
+): string {
+    $definicoes = implode(",\n                        ", array_map(
+        fn (string $coluna): string => "{$coluna} TEXT NULL",
+        array_values(array_filter($colunas, fn (string $c): bool => $c !== 'id'))
+    ));
+
+    $argumentoProvider = $provider === '' ? '' : "'{$provider}'";
+
+    return strtr(<<<'PHP'
+        <?php
+
+        namespace Testes\Controllers;
+
+        use Modelos\{{CLASSE}};
+        use Nucleo\Database;
+        use Nucleo\Sessao;
+        use Testes\Suporte\TesteBase;
+
+        class {{CONTROLADOR}}Test extends TesteBase
+        {
+            private {{CLASSE}} $modelo;
+
+            public function preparar(): void
+            {
+                $this->limparSessao();
+
+                $this->recriarTabelas([
+                    '{{TABELA}}' => "CREATE TABLE {{TABELA}} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        {{DEFINICOES}}
+                    )",
+                ]);
+
+                $this->modelo = new {{CLASSE}}();
+            }
+
+            public function testeRegistraEntraESai(): void
+            {
+                $registrar = $this->postar('{{ROTA}}/registrar', [{{DADO_NOME}}
+                    'email' => 'ana@example.com',
+                    'senha' => 'segredo123',
+                ]);
+                $this->assertVerdadeiro($registrar->redirecionouPara('{{ROTA}}/login'));
+
+                $conta = $this->modelo->buscarPorEmail('ana@example.com');
+                $this->assertNaoNulo($conta);
+
+                // A senha nunca fica em texto puro no banco.
+                $this->assertDiferente('segredo123', $conta['senha']);
+                $this->assertVerdadeiro(password_verify('segredo123', $conta['senha']));
+
+                $login = $this->postar('{{ROTA}}/login', [
+                    'email' => 'ana@example.com',
+                    'senha' => 'segredo123',
+                ]);
+                $this->assertVerdadeiro($login->foiRedirecionado());
+                $this->assertVerdadeiro(autenticado({{PROVIDER}}));
+                $this->assertIgual($conta['id'], usuario_id({{PROVIDER}}));
+
+                $sair = $this->requisitar('{{ROTA}}/sair');
+                $this->assertVerdadeiro($sair->redirecionouPara('{{ROTA}}/login'));
+                $this->assertFalso(autenticado({{PROVIDER}}));
+            }
+
+            public function testeRecusaSenhaErrada(): void
+            {
+                $this->modelo->criarComSenha(['email' => 'ana@example.com'], 'segredo123');
+
+                $login = $this->postar('{{ROTA}}/login', [
+                    'email' => 'ana@example.com',
+                    'senha' => 'errada',
+                ]);
+
+                $this->assertVerdadeiro($login->redirecionouPara('{{ROTA}}/login'));
+                $this->assertFalso(autenticado({{PROVIDER}}));
+            }
+
+            public function testeRecusaCadastroInvalido(): void
+            {
+                $curta = $this->postar('{{ROTA}}/registrar', [{{DADO_NOME}}
+                    'email' => 'ana@example.com',
+                    'senha' => '123',
+                ]);
+                $this->assertVerdadeiro($curta->redirecionouPara('{{ROTA}}/registrar'));
+
+                $semEmail = $this->postar('{{ROTA}}/registrar', [{{DADO_NOME}}
+                    'email' => 'nao-e-um-email',
+                    'senha' => 'segredo123',
+                ]);
+                $this->assertVerdadeiro($semEmail->redirecionouPara('{{ROTA}}/registrar'));
+
+                $this->assertIgual(0, $this->modelo->contar());
+            }
+
+            public function testeRecusaEmailRepetido(): void
+            {
+                $this->modelo->criarComSenha(['email' => 'ana@example.com'], 'segredo123');
+
+                $repetido = $this->postar('{{ROTA}}/registrar', [{{DADO_NOME}}
+                    'email' => 'ana@example.com',
+                    'senha' => 'outrasenha',
+                ]);
+
+                $this->assertVerdadeiro($repetido->redirecionouPara('{{ROTA}}/registrar'));
+                $this->assertIgual(1, $this->modelo->contar());
+            }
+
+            public function testeRecusaLoginSemToken(): void
+            {
+                $this->modelo->criarComSenha(['email' => 'ana@example.com'], 'segredo123');
+
+                $login = $this->postarSemToken('{{ROTA}}/login', [
+                    'email' => 'ana@example.com',
+                    'senha' => 'segredo123',
+                ]);
+
+                $this->assertVerdadeiro($login->foiRedirecionado());
+                $this->assertFalso(autenticado({{PROVIDER}}));
+            }
+        }
+        PHP, [
+        '{{CLASSE}}'      => $classe,
+        '{{CONTROLADOR}}' => $controlador,
+        '{{TABELA}}'      => $tabela,
+        '{{DEFINICOES}}'  => $definicoes,
+        '{{ROTA}}'        => $rota,
+        '{{PROVIDER}}'    => $argumentoProvider,
+        '{{DADO_NOME}}'   => $temNome ? "\n            'nome'  => 'Ana'," : '',
+    ]);
+}
+
+// =====================================================================
+// relatorio:pdf
+// =====================================================================
+
+function gerarRelatorioPdf(array $argumentos): void
+{
+    [$posicionais] = separarOpcoes($argumentos, []);
+
+    if ($posicionais === [] || count($posicionais) > 2) {
+        throw new InvalidArgumentException(
+            "Uso: php console.php relatorio:pdf <modelo|tabela> [arquivo.pdf]\n"
+            . 'Exemplo: php console.php relatorio:pdf produtos relatorios/produtos.pdf'
+        );
     }
 
-    public function sair(): void
-    {
-        Sessao::remover('__CHAVE_AUTENTICACAO__');
-        Sessao::remover('__CHAVE_USUARIO__');
-        $this->redirecionar('__ROTA__/login');
+    $modelo    = resolverModeloRelatorio($posicionais[0]);
+    $registros = $modelo['instancia']->todos();
+    $colunas   = $registros === [] ? colunasDaTabela($modelo['tabela']) : array_keys($registros[0]);
+    $arquivo   = caminhoRelatorioPdf($posicionais[1] ?? "relatorios/{$modelo['tabela']}.pdf");
+
+    RelatorioPdf::gerar("Relatorio de {$modelo['tabela']}", $colunas, $registros, $arquivo);
+
+    echo 'Relatorio PDF criado: ' . caminhoRelativo($arquivo) . "\n";
+    echo '  ' . count($registros) . " registro(s).\n";
+}
+
+function resolverModeloRelatorio(string $alvo): array
+{
+    if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $alvo)) {
+        throw new InvalidArgumentException("Modelo ou tabela invalido: \"{$alvo}\".");
     }
-}
-PHP);
-}
 
-function viewLoginAutenticacaoGerada(string $rota): string
-{
-    return str_replace('__ROTA__', $rota, <<<'PHP'
-<div class="row justify-content-center"><div class="col-12 col-md-7 col-lg-5"><div class="card border-0 shadow-sm p-4"><h1 class="h3 mb-4">Entrar</h1><form method="post" action="<?= url('__ROTA__/login') ?>"><div class="mb-3"><label class="form-label" for="email">E-mail</label><input class="form-control" id="email" type="email" name="email" autocomplete="email" required></div><div class="mb-4"><label class="form-label" for="senha">Senha</label><input class="form-control" id="senha" type="password" name="senha" autocomplete="current-password" required></div><button class="btn btn-primary w-100" type="submit">Entrar</button></form><p class="text-center mt-4 mb-0"><a href="<?= url('__ROTA__/registrar') ?>">Criar uma conta</a></p></div></div></div>
-PHP);
-}
+    $candidatos = array_unique([pascal($alvo), classeDaTabela(strtolower($alvo))]);
 
-function viewRegistroAutenticacaoGerada(bool $temNome, string $rota): string
-{
-    $campoNome = $temNome
-        ? '<div class="mb-3"><label class="form-label" for="nome">Nome</label><input class="form-control" id="nome" type="text" name="nome" autocomplete="name" required></div>'
-        : '';
+    foreach ($candidatos as $classe) {
+        $arquivo = CAMINHO_MODELOS . "/{$classe}.php";
 
-    return str_replace(
-        ['__CAMPO_NOME__', '__ROTA__'],
-        [$campoNome, $rota],
-        <<<'PHP'
-<div class="row justify-content-center"><div class="col-12 col-md-7 col-lg-5"><div class="card border-0 shadow-sm p-4"><h1 class="h3 mb-4">Criar conta</h1><form method="post" action="<?= url('__ROTA__/registrar') ?>">__CAMPO_NOME__<div class="mb-3"><label class="form-label" for="email">E-mail</label><input class="form-control" id="email" type="email" name="email" autocomplete="email" required></div><div class="mb-4"><label class="form-label" for="senha">Senha</label><input class="form-control" id="senha" type="password" name="senha" autocomplete="new-password" minlength="6" required></div><button class="btn btn-primary w-100" type="submit">Criar conta</button></form></div></div></div>
-PHP
+        if (!is_file($arquivo)) {
+            continue;
+        }
+
+        $nomeCompleto = "Modelos\\{$classe}";
+
+        if (!class_exists($nomeCompleto)) {
+            throw new RuntimeException("Nao foi possivel carregar o modelo: {$nomeCompleto}");
+        }
+
+        $instancia = new $nomeCompleto();
+
+        if (!$instancia instanceof Nucleo\Model) {
+            throw new RuntimeException("O modelo {$nomeCompleto} deve herdar de Nucleo\\Model.");
+        }
+
+        return [
+            'classe'    => $classe,
+            'tabela'    => $instancia->tabela(),
+            'instancia' => $instancia,
+        ];
+    }
+
+    $existentes = array_map(
+        fn (string $caminho): string => basename($caminho, '.php'),
+        glob(CAMINHO_MODELOS . '/*.php') ?: []
     );
+
+    throw new RuntimeException(
+        "Modelo nao encontrado: \"{$alvo}\" (procurei por " . implode(' e ', $candidatos) . ").\n"
+        . ($existentes === []
+            ? 'Gere um CRUD antes: php console.php scaffold:crud produtos nome:string'
+            : 'Models disponiveis: ' . implode(', ', $existentes))
+    );
+}
+
+function caminhoRelatorioPdf(string $caminho): string
+{
+    if (trim($caminho) === '') {
+        throw new InvalidArgumentException('O arquivo do relatorio nao pode ser vazio.');
+    }
+
+    if ($caminho[0] === '/') {
+        return $caminho;
+    }
+
+    $completo = CAMINHO_RAIZ . '/' . ltrim($caminho, '/');
+    $pasta    = dirname($completo);
+
+    if (!is_dir($pasta)) {
+        mkdir($pasta, 0777, true);
+    }
+
+    $real = realpath($pasta);
+
+    if ($real === false || !str_starts_with($real . '/', CAMINHO_RAIZ . '/')) {
+        throw new InvalidArgumentException(
+            "O relatorio deve ser gravado dentro do projeto: \"{$caminho}\" sai da pasta raiz."
+        );
+    }
+
+    return $real . '/' . basename($completo);
 }

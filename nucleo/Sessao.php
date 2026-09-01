@@ -100,6 +100,61 @@ class Sessao
         self::$errosAntigos   = [];
     }
 
+    /**
+     * Troca o identificador da sessao mantendo os dados.
+     *
+     * Chame SEMPRE logo depois de um login bem-sucedido. Sem isso o
+     * atacante pode fixar um id de sessao antes do login e continuar
+     * dentro da conta depois (ataque de "session fixation").
+     */
+    public static function regenerar(): void
+    {
+        // O token de formulario acompanha a sessao antiga: gera um novo.
+        unset($_SESSION['_token']);
+
+        if (PHP_SAPI === 'cli') {
+            return;
+        }
+
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Token de formulario (protecao contra CSRF)
+    // ------------------------------------------------------------------
+
+    /**
+     * Token unico desta sessao, usado nos formularios.
+     *
+     * CSRF ("Cross-Site Request Forgery") e quando outro site faz o
+     * navegador da vitima enviar um formulario para o nosso sistema
+     * aproveitando a sessao ja aberta. Como o site atacante nao consegue
+     * ler este token, ele nao consegue montar um POST valido.
+     */
+    public static function token(): string
+    {
+        if (!isset($_SESSION['_token']) || !is_string($_SESSION['_token'])) {
+            $_SESSION['_token'] = bin2hex(random_bytes(32));
+        }
+
+        return $_SESSION['_token'];
+    }
+
+    /**
+     * Confere o token recebido do formulario.
+     * Usa hash_equals() para nao vazar informacao pelo tempo de comparacao.
+     */
+    public static function tokenValido(mixed $token): bool
+    {
+        if (!is_string($token) || $token === '' || !isset($_SESSION['_token'])) {
+            return false;
+        }
+
+        return hash_equals((string) $_SESSION['_token'], $token);
+    }
+
     // ------------------------------------------------------------------
     // Mensagens rapidas (flash)
     // ------------------------------------------------------------------

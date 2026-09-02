@@ -225,7 +225,98 @@ Quando a validacao falha, o controller chama `voltarComErros()`, que devolve o
 visitante ao formulario com as mensagens por campo e o que ele ja tinha
 digitado (helpers `erro_de()`, `tem_erro()` e `antigo()`).
 
-## 4. Gerar relatorio PDF
+## 4. Pesquisa na listagem
+
+```bash
+php console.php scaffold:pesquisa <tabela|Modelo> <campo> [campo2 ...] [--remover]
+```
+
+Exemplo:
+
+```bash
+php console.php scaffold:pesquisa produtos nome preco disponivel validade
+```
+
+O comando coloca um formulario de pesquisa logo acima da tabela do index, com
+um campo para cada coluna informada, e faz o `index()` do controller filtrar
+por eles.
+
+Ele **altera** dois arquivos que ja existem:
+
+```text
+controllers/ProdutosController.php   (o metodo index)
+views/produtos/index.php             (o formulario acima da tabela)
+```
+
+Se um dos dois nao existir, o comando para e indica o `scaffold:crud`. Os
+dois sao gravados juntos: se a gravacao falhar no meio, o conteudo anterior de
+ambos volta.
+
+### 4.1 Campo e filtro de cada tipo
+
+Os tipos vem de `banco/esquema.mysql.sql`; ninguem precisa informa-los de novo.
+
+| Tipo da coluna | Campo no formulario | Filtro no SQL |
+|---|---|---|
+| `string`, `text` | `input type="text"` | `LIKE %termo%` |
+| `integer` | `input type="number"` | `= ?` |
+| `decimal` | `input type="number" step="0.01"` | `= ?` |
+| `boolean` | `select` Todos / Sim / Nao | `= ?` |
+| `date` | `input type="date"` | `= ?` |
+| `datetime` | `input type="date"` | `LIKE data%` (qualquer horario) |
+| `time` | `input type="time"` | `= ?` |
+| chave estrangeira | `select` com os registros do pai | `= ?` |
+
+`id` tambem pode ser pesquisado, por valor exato.
+
+O `boolean` vira uma lista de tres estados de proposito: uma caixa de marcar
+desmarcada nao diz se o visitante quer os registros com `Nao` ou quer todos.
+
+Quando so existe o esquema do SQLite, os tipos chegam menos detalhados (tudo e
+`TEXT`, `INTEGER` ou `REAL`), entao um `boolean` aparece como campo de numero.
+Regerar o CRUD recria o esquema MySQL e resolve.
+
+### 4.2 Como a pesquisa se comporta
+
+- campo em branco nao entra no filtro, entao a listagem completa continua
+  aparecendo enquanto ninguem pesquisa;
+- varios campos preenchidos se somam com `AND`;
+- os valores vao para o banco como parametros do PDO (`?`), nunca dentro do
+  texto do SQL;
+- `%` e `_` sao neutralizados por `Sql::comoLike()`: quem pesquisar por `%` ve
+  os registros que tem `%` no texto, e nao a tabela inteira;
+- a lista continua na ordem declarada em `$ordemPadrao` no model;
+- a pesquisa funciona igual pela URL: `/produtos?nome=teclado&disponivel=1`;
+- sem resultado, a tabela mostra "Nenhum registro encontrado para a pesquisa."
+  em vez de "Nenhum registro cadastrado.".
+
+### 4.3 Rodar de novo e desfazer
+
+O trecho gerado fica entre marcadores nos dois arquivos:
+
+```php
+// ----- scaffold:pesquisa inicio -----
+// ----- scaffold:pesquisa fim -----
+```
+
+```html
+<!-- scaffold:pesquisa inicio -->
+<!-- scaffold:pesquisa fim -->
+```
+
+Rodar o comando de novo troca o trecho anterior — inclusive tirando os campos
+que sairam da lista — em vez de empilhar um segundo formulario:
+
+```bash
+php console.php scaffold:pesquisa produtos nome preco
+php console.php scaffold:pesquisa produtos nome            # fica so o nome
+php console.php scaffold:pesquisa produtos --remover       # volta ao CRUD sem pesquisa
+```
+
+O que estiver fora dos marcadores nao e tocado, entao ajustes seus no `index()`
+e no resto da view continuam de pe.
+
+## 5. Gerar relatorio PDF
 
 Rota web gerada pelo scaffold:
 
@@ -249,7 +340,7 @@ em `relatorios/{tabela}.pdf`; caminhos relativos partem da raiz do projeto e
 nao podem sair dela. Para dados protegidos na web, use a rota do controller em
 vez de apontar para o arquivo.
 
-## 5. Gerar autenticacao
+## 6. Gerar autenticacao
 
 ```bash
 php console.php auth:install [Modelo|tabela] [Prefixo]
@@ -293,7 +384,7 @@ Rotas criadas:
 /auth/sair         encerra a sessao
 ```
 
-### 5.1 Como a senha e tratada
+### 6.1 Como a senha e tratada
 
 O trait `Nucleo\Autenticavel` intercepta a escrita no model:
 
@@ -318,7 +409,7 @@ quem exige credenciais e a tela de cadastro, nao a tabela.
 Para o model `Usuario` criado do zero, as colunas nascem `NOT NULL` com
 `UNIQUE` no e-mail, porque a unica porta de entrada e a tela de cadastro.
 
-### 5.2 Varios providers
+### 6.2 Varios providers
 
 Cada provider recebe controller, telas, rotas e chaves de sessao proprios:
 
@@ -343,7 +434,7 @@ se ele nao existir e houver apenas um provider instalado, usa esse. Se nenhuma
 tela de login existir, o erro diz qual comando rodar em vez de redirecionar
 para uma pagina inexistente.
 
-## 6. Protecao dos formularios (CSRF)
+## 7. Protecao dos formularios (CSRF)
 
 Todo formulario gerado inclui:
 
@@ -370,7 +461,7 @@ Metodos disponiveis em `Nucleo\Controller`:
 | `exigirAutenticacao(?string $provider)` | redireciona quem nao esta logado |
 | `voltarComErros(array $erros, string $rota)` | volta ao formulario com erros e dados |
 
-## 7. Menu de navegacao
+## 8. Menu de navegacao
 
 Os itens da barra lateral ficam em `configuracoes/menu.php`:
 
@@ -390,7 +481,7 @@ para quem esta logado, ou `'auth' => 'nao'` para o contrario.
 Os links de **Entrar** e **Sair** sao montados a partir dos providers
 instalados, entao um provider com prefixo tambem aparece no menu.
 
-## 8. Executar todos os testes
+## 9. Executar todos os testes
 
 ```bash
 php testes/executar.php
@@ -411,7 +502,7 @@ O teste gerado por `auth:install` verifica cadastro, login, saida, senha
 errada, e-mail repetido, senha curta e POST sem token — alem de confirmar que
 a senha ficou com hash no banco.
 
-## 9. Executar um teste especifico
+## 10. Executar um teste especifico
 
 ```bash
 php testes/executar.php ProdutoTest
@@ -419,7 +510,7 @@ php testes/executar.php ViewTest
 php testes/executar.php ProdutoTest::testeExecutaCrudCompleto
 ```
 
-## 10. Iniciar o servidor PHP
+## 11. Iniciar o servidor PHP
 
 ```bash
 php -S localhost:8000 roteador.php
@@ -428,19 +519,20 @@ php -S localhost:8000 roteador.php
 O arquivo `roteador.php` permite que as rotas do framework funcionem no
 servidor embutido do PHP.
 
-## 11. Validar a sintaxe de um arquivo PHP
+## 12. Validar a sintaxe de um arquivo PHP
 
 ```bash
 php -l console.php
 find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
 ```
 
-## 12. Fluxo completo para um projeto novo
+## 13. Fluxo completo para um projeto novo
 
 ```bash
 php instalar.php
 php console.php auth:install
 php console.php scaffold:crud clientes nome:string email:string telefone:string --auth
+php console.php scaffold:pesquisa clientes nome email
 php testes/executar.php
 php -S localhost:8000 roteador.php
 ```

@@ -224,6 +224,54 @@ Gere-a primeiro:
   php console.php scaffold:crud turmas nome:string
 ```
 
+### Pesquisar na listagem
+
+A listagem nasce mostrando tudo. Quando a tabela cresce, acrescente um
+formulario de pesquisa escolhendo por quais campos as pessoas vao procurar:
+
+```bash
+php console.php scaffold:pesquisa produtos nome preco disponivel
+```
+
+```text
+Pesquisa criada em /produtos
+  ~ controllers/ProdutosController.php
+  ~ views/produtos/index.php
+
+Campos pesquisaveis:
+  nome               texto         contem o trecho digitado (LIKE)
+  preco              numero        valor exato
+  disponivel         Sim/Nao       valor exato
+```
+
+Abra `/produtos`: o formulario aparece acima da tabela, um campo para cada
+coluna que voce escolheu. Nomes viram caixa de texto e procuram por trecho
+(digitar `tec` acha "Teclado"); numeros e datas procuram pelo valor exato;
+`boolean` vira uma lista Todos / Sim / Nao; e uma chave estrangeira como
+`turma_id` vira um select com as turmas cadastradas.
+
+Campo em branco nao filtra nada, entao a lista inteira continua aparecendo
+enquanto ninguem pesquisa. Preencher dois campos soma as duas condicoes. E,
+como o formulario usa `method="get"`, a pesquisa fica na barra de enderecos e
+pode ser guardada nos favoritos ou enviada para outra pessoa:
+
+```text
+/produtos?nome=teclado&disponivel=1
+```
+
+Nada disso abre brecha de SQL Injection: o que a pessoa digita vai para o banco
+como parametro (`?`), e os curingas `%` e `_` sao neutralizados. Pesquisar por
+`%` mostra os produtos que tem `%` no nome, e nao a tabela inteira.
+
+O comando escreve entre marcadores, entao da para mudar de ideia:
+
+```bash
+php console.php scaffold:pesquisa produtos nome      # so o nome, os outros saem
+php console.php scaffold:pesquisa produtos --remover # volta a listagem sem pesquisa
+```
+
+O que estiver fora dos marcadores continua como voce deixou.
+
 ### Relatorio PDF
 
 O scaffold cria a rota do relatorio e o link na listagem:
@@ -443,6 +491,7 @@ php console.php scaffold:crud produtos nome:strng -v
 php instalar.php
 php console.php auth:install
 php console.php scaffold:crud clientes nome:string email:string telefone:string --auth
+php console.php scaffold:pesquisa clientes nome email
 php testes/executar.php
 php -S localhost:8000 roteador.php
 ```

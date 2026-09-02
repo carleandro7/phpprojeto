@@ -11,6 +11,7 @@ Requisitos: PHP 8.1 ou superior e SQLite ou MySQL/MariaDB.
 php instalar.php
 php console.php auth:install
 php console.php scaffold:crud produtos nome:string preco:decimal estoque:integer --auth
+php console.php scaffold:pesquisa produtos nome preco
 php -S localhost:8000 roteador.php
 ```
 
@@ -67,6 +68,44 @@ php console.php scaffold:crud matriculas nome:string turma_id:belongs_to=turmas
 ```
 
 A tabela pai precisa existir antes; o comando recusa a relacao caso contrario.
+
+### Pesquisa na listagem
+
+```bash
+php console.php scaffold:pesquisa produtos nome preco disponivel
+```
+
+Coloca um formulario de pesquisa logo acima da tabela do index, com um campo
+para cada coluna informada. O comando edita o `index()` do controller e a view
+`index.php` do recurso, que ja precisam existir.
+
+Cada tipo ganha o campo e o filtro que fazem sentido:
+
+| Tipo da coluna | Campo no formulario | Filtro |
+|---|---|---|
+| `string`, `text` | caixa de texto | contem o trecho digitado (`LIKE`) |
+| `integer`, `decimal` | caixa de numero | valor exato |
+| `boolean` | lista Todos / Sim / Nao | valor exato |
+| `date`, `time` | seletor de data ou hora | valor exato |
+| `datetime` | seletor de data | qualquer horario daquela data |
+| `campo_id` (relacao) | lista com os registros do pai | valor exato |
+
+Campo em branco nao filtra nada, entao a listagem completa continua aparecendo
+enquanto ninguem pesquisa. Quando mais de um campo e preenchido, eles se somam
+(`E`, nao `OU`). A pesquisa tambem funciona direto pela URL:
+`/produtos?nome=teclado&disponivel=1`.
+
+Os valores digitados vao para o banco como parametros do PDO, e `%` e `_` sao
+neutralizados por `Sql::comoLike()` — quem pesquisar por `%` ve os registros
+que tem `%` no texto, e nao a tabela inteira.
+
+O trecho gerado fica entre marcadores `scaffold:pesquisa`. Rodar o comando de
+novo troca esse trecho em vez de empilhar um segundo formulario, e o
+`--remover` devolve o CRUD ao estado anterior:
+
+```bash
+php console.php scaffold:pesquisa produtos --remover
+```
 
 ### Autenticacao
 

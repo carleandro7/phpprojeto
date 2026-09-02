@@ -4,6 +4,7 @@
  * Console do framework.
  *
  *     php console.php scaffold:crud tabela campo:tipo ...
+ *     php console.php scaffold:pesquisa tabela campo ...
  *     php console.php auth:install [Modelo] [Prefixo]
  *     php console.php relatorio:pdf modelo|tabela [arquivo.pdf]
  *
@@ -31,10 +32,11 @@ $argumentos = array_values(array_filter($argumentos, fn (string $a): bool => $a 
 
 try {
     match ($comando) {
-        'scaffold:crud' => gerarCrud($argumentos),
-        'auth:install'  => gerarAutenticacao($argumentos),
-        'relatorio:pdf' => gerarRelatorioPdf($argumentos),
-        default         => ajuda($comando),
+        'scaffold:crud'     => gerarCrud($argumentos),
+        'scaffold:pesquisa' => gerarPesquisa($argumentos),
+        'auth:install'      => gerarAutenticacao($argumentos),
+        'relatorio:pdf'     => gerarRelatorioPdf($argumentos),
+        default             => ajuda($comando),
     };
 } catch (Throwable $erro) {
     fwrite(STDERR, "\n[ERRO] " . $erro->getMessage() . "\n");
@@ -62,6 +64,7 @@ function ajuda(string $comando): void
 
     Uso:
       php console.php scaffold:crud <tabela> <campo:tipo> ... [opcoes]
+      php console.php scaffold:pesquisa <tabela> <campo> ... [--remover]
       php console.php auth:install [Modelo|tabela] [Prefixo]
       php console.php relatorio:pdf <modelo|tabela> [arquivo.pdf]
 
@@ -76,11 +79,15 @@ function ajuda(string $comando): void
       --modelo=Nome      define o nome da classe do model
       --sem-menu         nao adiciona o recurso a configuracoes/menu.php
 
+    Opcao do scaffold:pesquisa:
+      --remover          tira o formulario de pesquisa do index
+
     Opcao geral:
       -v                 mostra os detalhes tecnicos quando algo falha
 
     Exemplos:
       php console.php scaffold:crud produtos nome:string preco:decimal --auth
+      php console.php scaffold:pesquisa produtos nome preco
       php console.php auth:install Cliente
       php console.php auth:install Professor professor
 
@@ -2450,4 +2457,783 @@ function caminhoRelatorioPdf(string $caminho): string
     }
 
     return $real . '/' . basename($completo);
+}
+
+// =====================================================================
+// scaffold:pesquisa
+// =====================================================================
+
+/**
+ * Coloca um formulario de pesquisa acima da tabela do index.
+ *
+ *     php console.php scaffold:pesquisa produtos nome preco disponivel
+ *     php console.php scaffold:pesquisa produtos --remover
+ *
+ * O comando edita dois arquivos que ja existem — o controller e a view
+ * index — sempre dentro de marcadores. Rodar de novo troca o trecho
+ * anterior em vez de empilhar um segundo formulario.
+ */
+function gerarPesquisa(array $argumentos): void
+{
+    [$posicionais, $opcoes] = separarOpcoes($argumentos, ['remover']);
+
+    $remover = array_key_exists('remover', $opcoes);
+
+    if ($posicionais === [] || (!$remover && count($posicionais) < 2)) {
+        throw new InvalidArgumentException(
+            "Uso: php console.php scaffold:pesquisa <tabela> <campo> [campo2 ...]\n"
+            . "Exemplo: php console.php scaffold:pesquisa produtos nome preco\n"
+            . 'Para tirar o formulario: php console.php scaffold:pesquisa produtos --remover'
+        );
+    }
+
+    $modelo     = resolverModeloRelatorio($posicionais[0]);
+    $tabela     = $modelo['tabela'];
+    $recurso    = pascal($tabela);
+    $pasta      = strtolower($recurso);
+    $controller = CAMINHO_CONTROLLERS . "/{$recurso}Controller.php";
+    $view       = CAMINHO_VIEWS . "/{$pasta}/index.php";
+
+    foreach ([$controller, $view] as $arquivo) {
+        if (!is_file($arquivo)) {
+            throw new RuntimeException(
+                'Arquivo do CRUD nao encontrado: ' . caminhoRelativo($arquivo) . "\n"
+                . "Gere o CRUD antes:\n  php console.php scaffold:crud {$tabela} nome:string"
+            );
+        }
+    }
+
+    // -------------------------------------------------------------
+    // 1. Monta os dois arquivos na memoria. Nada e gravado ainda.
+    // -------------------------------------------------------------
+    $campos = $remover
+        ? []
+        : camposPesquisados($tabela, array_slice($posicionais, 1), $modelo['classe']);
+
+    $novos = $remover
+        ? [
+            $controller => controllerSemPesquisa(lerArquivo($controller), $controller),
+            $view       => indexSemPesquisa(lerArquivo($view)),
+        ]
+        : [
+            $controller => controllerComPesquisa(lerArquivo($controller), $controller, $campos, $modelo['classe'], $pasta),
+            $view       => indexComPesquisa(lerArquivo($view), $view, $pasta, $campos),
+        ];
+
+    // -------------------------------------------------------------
+    // 2. Grava os dois de uma vez, com volta atras se algo falhar.
+    // -------------------------------------------------------------
+    regravarArquivos($novos);
+
+    if ($remover) {
+        echo "Pesquisa removida de /{$pasta}\n";
+        echo '  ~ ' . caminhoRelativo($controller) . "\n";
+        echo '  ~ ' . caminhoRelativo($view) . "\n";
+
+        return;
+    }
+
+    echo "Pesquisa criada em /{$pasta}\n";
+    echo '  ~ ' . caminhoRelativo($controller) . "\n";
+    echo '  ~ ' . caminhoRelativo($view) . "\n\n";
+    echo "Campos pesquisaveis:\n";
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        printf(
+            "  %-18s %-13s %s\n",
+            $nome,
+            rotuloTipoPesquisa($tipo, $relacao),
+            explicacaoPesquisa($tipo, $relacao)
+        );
+    }
+
+    echo "\nO formulario aparece acima da tabela em /{$pasta} e envia os campos\n";
+    echo "pela query string: /{$pasta}?{$campos[0][0]}=...\n";
+    echo "\nPara desfazer: php console.php scaffold:pesquisa {$tabela} --remover\n";
+}
+
+/**
+ * Confere os campos pedidos contra as colunas registradas no esquema.
+ *
+ * @return list<array{0:string,1:string,2:?string}>
+ */
+function camposPesquisados(string $tabela, array $pedidos, string $classe): array
+{
+    $colunas = colunasDoEsquema($tabela);
+
+    if ($colunas === []) {
+        throw new RuntimeException(
+            "Nao encontrei a tabela \"{$tabela}\" em banco/esquema.mysql.sql nem em"
+            . " banco/esquema.sqlite.sql.\n"
+            . "Gere o CRUD antes:\n  php console.php scaffold:crud {$tabela} nome:string"
+        );
+    }
+
+    $campos = [];
+
+    foreach ($pedidos as $pedido) {
+        $nome = strtolower(trim($pedido));
+
+        validarNome($nome, 'nome de campo');
+
+        // O roteador usa $_GET['url'], entao uma coluna com esse nome nunca
+        // receberia o que o visitante digitou no formulario.
+        if ($nome === 'url') {
+            throw new InvalidArgumentException(
+                'O campo "url" nao pode ser pesquisado: o roteador ja usa esse nome na query string.'
+            );
+        }
+
+        if (!isset($colunas[$nome])) {
+            throw new InvalidArgumentException(
+                "A tabela {$tabela} nao tem a coluna \"{$nome}\".\n"
+                . 'Colunas disponiveis: ' . implode(', ', array_keys($colunas))
+            );
+        }
+
+        foreach ($campos as $escolhido) {
+            if ($escolhido[0] === $nome) {
+                throw new InvalidArgumentException("Campo repetido: {$nome}.");
+            }
+        }
+
+        [$tipo, $relacao] = $colunas[$nome];
+
+        // Sem o metodo da tabela pai no model nao da para montar o <select>;
+        // nesse caso o campo vira uma caixa de numero comum.
+        if ($relacao !== null && !modeloTemMetodo($classe, $relacao)) {
+            $relacao = null;
+            $tipo    = 'integer';
+        }
+
+        $campos[] = [$nome, $tipo, $relacao];
+    }
+
+    return $campos;
+}
+
+/**
+ * Le as colunas de uma tabela direto do arquivo de esquema, sem precisar de
+ * banco ligado. O esquema MySQL vem primeiro porque guarda o tipo original
+ * (TINYINT(1), DATE, VARCHAR...); o do SQLite e o plano B.
+ *
+ * @return array<string,array{0:string,1:?string}> nome => [tipo, tabela pai]
+ */
+function colunasDoEsquema(string $tabela): array
+{
+    foreach ([true, false] as $mysql) {
+        $arquivo = arquivoEsquema($mysql);
+
+        if (!is_file($arquivo)) {
+            continue;
+        }
+
+        if (!preg_match(padraoCreateTable($tabela), (string) file_get_contents($arquivo), $encontrado)) {
+            continue;
+        }
+
+        return interpretarCreateTable($encontrado[0]);
+    }
+
+    return [];
+}
+
+/**
+ * Traduz um CREATE TABLE em colunas com tipo e relacao.
+ *
+ * @return array<string,array{0:string,1:?string}>
+ */
+function interpretarCreateTable(string $sql): array
+{
+    $abre  = strpos($sql, '(');
+    $fecha = strrpos($sql, ')');
+
+    if ($abre === false || $fecha === false || $fecha <= $abre) {
+        return [];
+    }
+
+    $corpo   = substr($sql, $abre + 1, $fecha - $abre - 1);
+    $colunas = ['id' => ['integer', null]];
+    $pais    = [];
+
+    preg_match_all(
+        '/FOREIGN\s+KEY\s*\(\s*`?(\w+)`?\s*\)\s*REFERENCES\s+`?(\w+)`?/i',
+        $corpo,
+        $chaves,
+        PREG_SET_ORDER
+    );
+
+    foreach ($chaves as $chave) {
+        $pais[strtolower($chave[1])] = strtolower($chave[2]);
+    }
+
+    foreach (explode(',', $corpo) as $linha) {
+        $linha = trim($linha);
+
+        if ($linha === '' || preg_match('/^(CONSTRAINT|FOREIGN|PRIMARY|UNIQUE|KEY|INDEX)\b/i', $linha)) {
+            continue;
+        }
+
+        if (!preg_match('/^`?([A-Za-z_]\w*)`?\s+([A-Za-z]+\s*(?:\([^)]*\))?)/', $linha, $partes)) {
+            continue;
+        }
+
+        $nome = strtolower($partes[1]);
+
+        if ($nome === 'id') {
+            continue;
+        }
+
+        $colunas[$nome] = [tipoDoEsquema($partes[2]), $pais[$nome] ?? null];
+    }
+
+    return $colunas;
+}
+
+/**
+ * Caminho inverso do tipoSql(): do tipo SQL de volta para o tipo do scaffold.
+ *
+ * O esquema do SQLite guarda menos informacao (tudo vira TEXT, INTEGER ou
+ * REAL), entao um boolean lido de la aparece como numero. Basta regerar o
+ * CRUD para o esquema MySQL ficar disponivel com os tipos completos.
+ */
+function tipoDoEsquema(string $sql): string
+{
+    $sql = strtoupper((string) preg_replace('/\s+/', '', $sql));
+
+    return match (true) {
+        str_starts_with($sql, 'TINYINT(1)') => 'boolean',
+        str_starts_with($sql, 'DATETIME'),
+        str_starts_with($sql, 'TIMESTAMP')  => 'datetime',
+        str_starts_with($sql, 'DATE')       => 'date',
+        str_starts_with($sql, 'TIME')       => 'time',
+        str_starts_with($sql, 'DECIMAL'),
+        str_starts_with($sql, 'NUMERIC'),
+        str_starts_with($sql, 'DOUBLE'),
+        str_starts_with($sql, 'FLOAT'),
+        str_starts_with($sql, 'REAL')       => 'decimal',
+        str_starts_with($sql, 'TINYINT'),
+        str_starts_with($sql, 'SMALLINT'),
+        str_starts_with($sql, 'MEDIUMINT'),
+        str_starts_with($sql, 'BIGINT'),
+        str_starts_with($sql, 'INT')        => 'integer',
+        str_starts_with($sql, 'TEXT')       => 'text',
+        default                             => 'string',
+    };
+}
+
+/**
+ * Como cada tipo e pesquisado:
+ *   'contem' -> LIKE %termo%  (texto)
+ *   'comeca' -> LIKE termo%   (datetime: a data casa com qualquer horario)
+ *   'exato'  -> =             (numero, boolean, data, hora, chave estrangeira)
+ */
+function modoPesquisa(string $tipo, ?string $relacao): string
+{
+    if ($relacao !== null) {
+        return 'exato';
+    }
+
+    return match ($tipo) {
+        'string', 'text' => 'contem',
+        'datetime'       => 'comeca',
+        default          => 'exato',
+    };
+}
+
+function rotuloTipoPesquisa(string $tipo, ?string $relacao): string
+{
+    if ($relacao !== null) {
+        return $relacao;
+    }
+
+    return match ($tipo) {
+        'boolean'            => 'Sim/Nao',
+        'integer', 'decimal' => 'numero',
+        'date'               => 'data',
+        'datetime'           => 'data e hora',
+        'time'               => 'hora',
+        default              => 'texto',
+    };
+}
+
+function explicacaoPesquisa(string $tipo, ?string $relacao): string
+{
+    if ($relacao !== null) {
+        return 'lista suspensa com os registros de ' . $relacao;
+    }
+
+    return match (modoPesquisa($tipo, $relacao)) {
+        'contem' => 'contem o trecho digitado (LIKE)',
+        'comeca' => 'todos os horarios da data escolhida (LIKE)',
+        default  => 'valor exato',
+    };
+}
+
+// ---------------------------------------------------------------------
+// scaffold:pesquisa - arquivos
+// ---------------------------------------------------------------------
+
+function lerArquivo(string $caminho): string
+{
+    $conteudo = file_get_contents($caminho);
+
+    if ($conteudo === false) {
+        throw new RuntimeException('Nao foi possivel ler: ' . caminhoRelativo($caminho));
+    }
+
+    return $conteudo;
+}
+
+/**
+ * Regrava arquivos que ja existiam. Se um deles falhar, o conteudo
+ * anterior de todos volta — ao contrario de escreverArquivos(), que apaga
+ * os arquivos criados porque la eles ainda nao existiam.
+ *
+ * @param array<string,string> $arquivos caminho => conteudo novo
+ */
+function regravarArquivos(array $arquivos): void
+{
+    $originais = [];
+
+    foreach (array_keys($arquivos) as $caminho) {
+        $originais[$caminho] = lerArquivo($caminho);
+    }
+
+    $gravados = [];
+
+    try {
+        foreach ($arquivos as $caminho => $conteudo) {
+            if (file_put_contents($caminho, rtrim($conteudo, "\n") . "\n", LOCK_EX) === false) {
+                throw new RuntimeException('Nao foi possivel gravar: ' . caminhoRelativo($caminho));
+            }
+
+            $gravados[] = $caminho;
+        }
+    } catch (Throwable $e) {
+        foreach ($gravados as $caminho) {
+            file_put_contents($caminho, $originais[$caminho], LOCK_EX);
+        }
+
+        throw $e;
+    }
+}
+
+/** @return array{0:string,1:string} marcadores do trecho gerado no controller */
+function marcadoresPesquisaPhp(): array
+{
+    return [
+        '        // ----- scaffold:pesquisa inicio -----',
+        '        // ----- scaffold:pesquisa fim -----',
+    ];
+}
+
+/** @return array{0:string,1:string} marcadores do trecho gerado na view */
+function marcadoresPesquisaHtml(): array
+{
+    return ['<!-- scaffold:pesquisa inicio -->', '<!-- scaffold:pesquisa fim -->'];
+}
+
+/** Texto do "nenhum registro" nas telas que ja tem pesquisa. */
+function vazioComPesquisa(): string
+{
+    return '<?= ($pesquisa ?? []) === []'
+        . " ? 'Nenhum registro cadastrado.'"
+        . " : 'Nenhum registro encontrado para a pesquisa.' ?>";
+}
+
+function modeloTemMetodo(string $classe, string $metodo): bool
+{
+    $arquivo = CAMINHO_MODELOS . "/{$classe}.php";
+
+    return is_file($arquivo)
+        && preg_match('/function\s+' . preg_quote($metodo, '/') . '\s*\(/', lerArquivo($arquivo)) === 1;
+}
+
+// ---------------------------------------------------------------------
+// scaffold:pesquisa - controller
+// ---------------------------------------------------------------------
+
+/** Recorta o metodo index() inteiro de dentro do controller. */
+function blocoIndexDoController(string $conteudo, string $arquivo): string
+{
+    $padrao = '/\n[ ]{4}public function index\(\): void\n[ ]{4}\{\n[\s\S]*?\n[ ]{4}\}\n/';
+
+    if (!preg_match($padrao, $conteudo, $encontrado)) {
+        throw new RuntimeException(
+            'Nao encontrei o metodo index() em ' . caminhoRelativo($arquivo) . ".\n"
+            . 'Ele precisa comecar exatamente com "    public function index(): void".'
+        );
+    }
+
+    return $encontrado[0];
+}
+
+/**
+ * Faz o index() filtrar pelos campos pedidos. O trecho gerado fica entre
+ * marcadores, para poder ser trocado ou retirado depois.
+ */
+function controllerComPesquisa(
+    string $conteudo,
+    string $arquivo,
+    array $campos,
+    string $classe,
+    string $pasta
+): string {
+    $conteudo = garantirImportacaoSql($conteudo, $arquivo);
+    $antigo   = blocoIndexDoController($conteudo, $arquivo);
+
+    // Comeca sempre do index() limpo: rodar o comando de novo com menos
+    // campos nao pode deixar sobras da pesquisa anterior.
+    $bloco = blocoIndexLimpo($antigo);
+
+    // A listagem passa a vir de uma consulta com WHERE.
+    $bloco = str_replace(
+        "'registros' => \$this->modelo->todos(),",
+        "'registros' => \$this->modelo->consultar(\$sql, \$parametros),",
+        $bloco
+    );
+
+    if (!str_contains($bloco, "'registros' => \$this->modelo->consultar(\$sql, \$parametros),")) {
+        throw new RuntimeException(
+            'Nao encontrei a linha "\'registros\' => $this->modelo->todos()," no index() de '
+            . caminhoRelativo($arquivo) . ".\n"
+            . 'Reponha essa linha (ou gere o CRUD de novo) antes de acrescentar a pesquisa.'
+        );
+    }
+
+    // O que a view precisa para redesenhar o formulario ja preenchido.
+    if (!str_contains($bloco, "'pesquisa'")) {
+        $bloco = (string) preg_replace(
+            "/([ ]*)('registros'[^\n]*\n)/",
+            "\${1}\${2}\${1}'pesquisa'  => \$pesquisa,\n",
+            $bloco,
+            1
+        );
+    }
+
+    // Os <select> das chaves estrangeiras recebem a lista da tabela pai,
+    // pelo mesmo caminho que criar() e editar() ja usam.
+    foreach (relacoesUnicas($campos) as $relacao) {
+        $pai = $relacao[2];
+
+        if (str_contains($bloco, "'{$pai}'")) {
+            continue;
+        }
+
+        $bloco = (string) preg_replace(
+            "/([ ]*)('pesquisa'[^\n]*\n)/",
+            "\${1}\${2}\${1}" . str_pad("'{$pai}'", 11) . " => \\\$this->modelo->{$pai}(),\n",
+            $bloco,
+            1
+        );
+    }
+
+    // E o trecho gerado entra logo antes da chamada da view.
+    $bloco = (string) preg_replace(
+        '/(\n+)([ ]*)\$this->view\(/',
+        '${1}' . preg_quote_replace(filtrosPesquisaGerados($campos, ordemPadraoDoModelo($classe), $pasta))
+            . "\n\n\${2}\$this->view(",
+        $bloco,
+        1,
+        $trocas
+    );
+
+    if ($trocas !== 1) {
+        throw new RuntimeException(
+            'O index() de ' . caminhoRelativo($arquivo) . " nao chama \$this->view().\n"
+            . 'Deixe a chamada la (ou gere o CRUD de novo) antes de acrescentar a pesquisa.'
+        );
+    }
+
+    return str_replace($antigo, $bloco, $conteudo);
+}
+
+/** Devolve o index() ao estado sem pesquisa. */
+function controllerSemPesquisa(string $conteudo, string $arquivo): string
+{
+    $antigo = blocoIndexDoController($conteudo, $arquivo);
+
+    return str_replace($antigo, blocoIndexLimpo($antigo), $conteudo);
+}
+
+/**
+ * Tira do index() tudo que o scaffold:pesquisa tinha colocado: o trecho
+ * entre marcadores, a consulta filtrada e os dados extras da view.
+ */
+function blocoIndexLimpo(string $bloco): string
+{
+    [$inicio, $fim] = marcadoresPesquisaPhp();
+
+    $bloco = (string) preg_replace(
+        '/' . preg_quote($inicio, '/') . '[\s\S]*?' . preg_quote($fim, '/') . "\n\n?/",
+        '',
+        $bloco,
+        1
+    );
+
+    $bloco = str_replace(
+        "'registros' => \$this->modelo->consultar(\$sql, \$parametros),",
+        "'registros' => \$this->modelo->todos(),",
+        $bloco
+    );
+
+    // Sai o 'pesquisa' e saem as listas das tabelas pai, que so o
+    // formulario de pesquisa usava nesta tela.
+    return (string) preg_replace(
+        [
+            "/^[ ]*'pesquisa'[^\n]*\n/m",
+            "/^[ ]*'(\w+)'[ ]*=>[ ]*\\\$this->modelo->\\1\(\),\n/m",
+        ],
+        '',
+        $bloco
+    );
+}
+
+/** Escapa "$" e "\" para o texto ir literal na substituicao do preg_replace(). */
+function preg_quote_replace(string $texto): string
+{
+    return str_replace(['\\', '$'], ['\\\\', '\\$'], $texto);
+}
+
+/** Monta o trecho que le a query string e arma o SELECT. */
+function filtrosPesquisaGerados(array $campos, string $ordem, string $pasta): string
+{
+    [$inicio, $fim] = marcadoresPesquisaPhp();
+
+    $linhas = [
+        $inicio,
+        '        // O formulario acima da tabela manda os campos pela query string:',
+        "        //     /{$pasta}?{$campos[0][0]}=...",
+        '        // Campo em branco e ignorado, entao a lista completa continua',
+        '        // aparecendo enquanto ninguem pesquisar nada.',
+        '        //',
+        '        // Os VALORES vao como "?" (parametros do PDO). So os nomes de',
+        '        // coluna entram no texto do SQL, e eles sao fixos aqui.',
+        '        $pesquisa   = [];',
+        '        $condicoes  = [];',
+        '        $parametros = [];',
+    ];
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        $linhas[] = '';
+        $linhas[] = "        \$termo = \$this->get('{$nome}');";
+        $linhas[] = '';
+        $linhas[] = "        if (is_scalar(\$termo) && (string) \$termo !== '') {";
+        $linhas[] = "            \$pesquisa['{$nome}'] = (string) \$termo;";
+
+        $linhas[] = match (modoPesquisa($tipo, $relacao)) {
+            'contem', 'comeca' => "            \$condicoes[] = '{$nome} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;",
+            default            => "            \$condicoes[] = '{$nome} = ?';",
+        };
+
+        $linhas[] = match (modoPesquisa($tipo, $relacao)) {
+            'contem' => '            $parametros[] = Sql::comoLike((string) $termo);',
+            'comeca' => "            \$parametros[] = Sql::comoLike((string) \$termo, 'inicio');",
+            default  => '            $parametros[] = $termo;',
+        };
+
+        $linhas[] = '        }';
+    }
+
+    $linhas[] = '';
+    $linhas[] = "        \$sql = 'SELECT * FROM ' . \$this->modelo->tabela();";
+    $linhas[] = '';
+    $linhas[] = '        if ($condicoes !== []) {';
+    $linhas[] = "            \$sql .= ' WHERE ' . implode(' AND ', \$condicoes);";
+    $linhas[] = '        }';
+
+    if ($ordem !== '') {
+        $linhas[] = '';
+        $linhas[] = "        \$sql .= ' ORDER BY {$ordem}';";
+    }
+
+    $linhas[] = $fim;
+
+    return implode("\n", $linhas);
+}
+
+/**
+ * Ordenacao declarada no model, para a lista filtrada sair na mesma ordem
+ * em que o todos() a devolvia.
+ */
+function ordemPadraoDoModelo(string $classe): string
+{
+    $arquivo = CAMINHO_MODELOS . "/{$classe}.php";
+
+    if (!is_file($arquivo) || !preg_match('/\$ordemPadrao\s*=\s*\'([^\']*)\'/', lerArquivo($arquivo), $achado)) {
+        return 'id DESC';
+    }
+
+    return $achado[1] === '' ? '' : Nucleo\Sql::ordenacao($achado[1]);
+}
+
+/** O trecho gerado usa Sql::comoLike(), entao o import precisa existir. */
+function garantirImportacaoSql(string $conteudo, string $arquivo): string
+{
+    if (preg_match('/^use\s+Nucleo\\\\Sql;/m', $conteudo)) {
+        return $conteudo;
+    }
+
+    $novo = preg_replace(
+        '/^use\s+Nucleo\\\\Controller;/m',
+        "use Nucleo\\Controller;\nuse Nucleo\\Sql;",
+        $conteudo,
+        1,
+        $trocas
+    );
+
+    if ($trocas !== 1 || $novo === null) {
+        throw new RuntimeException(
+            'Nao encontrei "use Nucleo\\Controller;" em ' . caminhoRelativo($arquivo)
+            . " para acrescentar \"use Nucleo\\Sql;\".\n"
+            . 'Escreva essa linha a mao e rode o comando de novo.'
+        );
+    }
+
+    return $novo;
+}
+
+// ---------------------------------------------------------------------
+// scaffold:pesquisa - view
+// ---------------------------------------------------------------------
+
+/** Coloca (ou troca) o formulario de pesquisa acima da tabela do index. */
+function indexComPesquisa(string $conteudo, string $arquivo, string $pasta, array $campos): string
+{
+    $conteudo   = indexSemPesquisa($conteudo);
+    $formulario = formularioPesquisaGerado($pasta, $campos) . "\n\n";
+
+    // Com pesquisa, "nenhum registro" pode significar duas coisas bem
+    // diferentes; a view passa a distinguir as duas.
+    $conteudo = str_replace('Nenhum registro cadastrado.', vazioComPesquisa(), $conteudo);
+
+    foreach (['<div class="card border-0 shadow-sm">', '<div class="table-responsive">', '<table'] as $ancora) {
+        $posicao = strpos($conteudo, $ancora);
+
+        if ($posicao === false) {
+            continue;
+        }
+
+        // Entra no comeco da linha em que a tabela comeca.
+        $quebra = strrpos(substr($conteudo, 0, $posicao), "\n");
+        $corte  = $quebra === false ? 0 : $quebra + 1;
+
+        return substr($conteudo, 0, $corte) . $formulario . substr($conteudo, $corte);
+    }
+
+    throw new RuntimeException(
+        'Nao encontrei a tabela em ' . caminhoRelativo($arquivo) . ".\n"
+        . 'A view precisa manter o card da listagem gerado pelo scaffold:crud.'
+    );
+}
+
+/** Tira o formulario de pesquisa da view. */
+function indexSemPesquisa(string $conteudo): string
+{
+    [$inicio, $fim] = marcadoresPesquisaHtml();
+
+    $padrao = '/' . preg_quote($inicio, '/') . '[\s\S]*?' . preg_quote($fim, '/') . '\n*/';
+
+    return str_replace(
+        vazioComPesquisa(),
+        'Nenhum registro cadastrado.',
+        (string) preg_replace($padrao, '', $conteudo, 1)
+    );
+}
+
+function formularioPesquisaGerado(string $pasta, array $campos): string
+{
+    [$inicio, $fim] = marcadoresPesquisaHtml();
+
+    $blocos = '';
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        $blocos .= $relacao !== null
+            ? filtroRelacao($nome, $relacao)
+            : ($tipo === 'boolean' ? filtroBoolean($nome) : filtroSimples($nome, $tipo));
+    }
+
+    return strtr(<<<'HTML'
+        {{INICIO}}
+        <form class="card border-0 shadow-sm p-3 mb-3" method="get" action="<?= url('{{PASTA}}') ?>">
+            <div class="row g-2 align-items-end">
+        {{CAMPOS}}        <div class="col-12 col-lg-auto d-flex gap-2">
+                    <button class="btn btn-primary" type="submit">Pesquisar</button>
+                    <a class="btn btn-outline-secondary" href="<?= url('{{PASTA}}') ?>">Limpar</a>
+                </div>
+            </div>
+        </form>
+        {{FIM}}
+        HTML, [
+        '{{INICIO}}' => $inicio,
+        '{{FIM}}'    => $fim,
+        '{{PASTA}}'  => $pasta,
+        '{{CAMPOS}}' => $blocos,
+    ]);
+}
+
+function filtroSimples(string $nome, string $tipo): string
+{
+    $tipoHtml = match ($tipo) {
+        'integer', 'decimal' => 'number',
+        'date', 'datetime'   => 'date',
+        'time'               => 'time',
+        default              => 'text',
+    };
+
+    $extra = $tipo === 'decimal' ? ' step="0.01"' : '';
+
+    return strtr(<<<'HTML'
+                <div class="col-12 col-sm-6 col-lg-3">
+                    <label class="form-label small text-secondary mb-1" for="pesquisa_{{NOME}}">{{NOME}}</label>
+                    <input class="form-control" id="pesquisa_{{NOME}}" type="{{TIPO}}"{{EXTRA}} name="{{NOME}}" value="<?= e($pesquisa['{{NOME}}'] ?? '') ?>">
+                </div>
+
+        HTML, [
+        '{{NOME}}'  => $nome,
+        '{{TIPO}}'  => $tipoHtml,
+        '{{EXTRA}}' => $extra,
+    ]);
+}
+
+/**
+ * Boolean vira uma lista de tres estados: "Todos" (nao filtra), Sim e Nao.
+ * Uma caixa de marcar nao daria conta — desmarcada, ela nao diz se o
+ * visitante quer os "Nao" ou quer todo mundo.
+ */
+function filtroBoolean(string $nome): string
+{
+    return strtr(<<<'HTML'
+                <div class="col-12 col-sm-6 col-lg-3">
+                    <label class="form-label small text-secondary mb-1" for="pesquisa_{{NOME}}">{{NOME}}</label>
+                    <?php $escolhido = (string) ($pesquisa['{{NOME}}'] ?? ''); ?>
+                    <select class="form-select" id="pesquisa_{{NOME}}" name="{{NOME}}">
+                        <option value="">Todos</option>
+                        <option value="1" <?= $escolhido === '1' ? 'selected' : '' ?>>Sim</option>
+                        <option value="0" <?= $escolhido === '0' ? 'selected' : '' ?>>Nao</option>
+                    </select>
+                </div>
+
+        HTML, ['{{NOME}}' => $nome]);
+}
+
+function filtroRelacao(string $nome, string $tabelaPai): string
+{
+    return strtr(<<<'HTML'
+                <div class="col-12 col-sm-6 col-lg-3">
+                    <label class="form-label small text-secondary mb-1" for="pesquisa_{{NOME}}">{{NOME}}</label>
+                    <?php $escolhido = (string) ($pesquisa['{{NOME}}'] ?? ''); ?>
+                    <select class="form-select" id="pesquisa_{{NOME}}" name="{{NOME}}">
+                        <option value="">Todos</option>
+                        <?php foreach ((${{PAI}} ?? []) as $opcao): ?>
+                            <option value="<?= e($opcao['id']) ?>" <?= $escolhido === (string) $opcao['id'] ? 'selected' : '' ?>><?= e($opcao['nome'] ?? $opcao['descricao'] ?? ('#' . $opcao['id'])) ?></option>
+                        <?php endforeach ?>
+                    </select>
+                </div>
+
+        HTML, [
+        '{{NOME}}' => $nome,
+        '{{PAI}}'  => $tabelaPai,
+    ]);
 }

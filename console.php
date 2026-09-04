@@ -1269,8 +1269,14 @@ function tipoSqlTeste(string $tipo): string
     } . ' NULL';
 }
 
-function valorTeste(string $tipo, bool $atualizado = false): mixed
+function valorTeste(string $tipo, bool $atualizado = false, string $nome = ''): mixed
 {
+    // Um campo chamado "email" ganha a regra email() no model gerado: com o
+    // "Teste" generico o proprio teste gerado nasceria falhando na validacao.
+    if ($nome === 'email') {
+        return $atualizado ? 'maria@example.com' : 'ana@example.com';
+    }
+
     return match ($tipo) {
         'integer'  => $atualizado ? 2 : 1,
         'decimal'  => $atualizado ? 20.5 : 10.5,
@@ -1291,7 +1297,7 @@ function valorNoTeste(array $campo, bool $atualizado = false): string
             : "\$this->idsRelacoes['{$campo[0]}']";
     }
 
-    return var_export(valorTeste($campo[1], $atualizado), true);
+    return var_export(valorTeste($campo[1], $atualizado, $campo[0]), true);
 }
 
 function listaDeDados(array $campos, bool $atualizado = false, ?string $zerar = null): string

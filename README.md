@@ -130,6 +130,9 @@ O comando adiciona `email` e `senha` (com indice unico no e-mail), aplica o
 trait `Nucleo\Autenticavel` ao model e gera as telas, as rotas
 `registrar`, `login` e `sair` do provider e um teste de integracao.
 
+As telas de entrar e criar conta usam `views/template/layout-login.php` — uma
+pagina isolada, sem o menu lateral do sistema.
+
 As senhas nunca vao para o banco em texto puro: o trait aplica
 `password_hash()` em `criar()`, `atualizar()` e `criarComSenha()`, e o login
 confere com `password_verify()`. O CRUD comum do model continua funcionando

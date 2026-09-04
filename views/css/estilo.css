@@ -418,6 +418,58 @@ code {
 .rodape__interno p { margin: .2rem 0; }
 .rodape__nota { font-size: .82rem; opacity: .8; }
 
+/* ---------- Telas de login (template/layout-login.php) ---------- */
+.corpo-login {
+    min-height: 100vh;
+    background: linear-gradient(180deg, #12355b, #0b2846);
+}
+
+.login {
+    display: flex;
+    min-height: 100vh;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+}
+
+.login__caixa {
+    width: 100%;
+    max-width: 26rem;
+    padding: 2rem;
+    border-radius: var(--raio);
+    background: var(--cor-superficie);
+    box-shadow: 0 12px 32px rgba(6, 20, 40, .35);
+}
+
+.login__marca {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    margin-bottom: 1.75rem;
+    color: var(--cor-texto);
+    font-weight: 600;
+}
+
+.login__logo {
+    display: grid;
+    width: 2.15rem;
+    height: 2.15rem;
+    place-items: center;
+    border-radius: .45rem;
+    background: var(--cor-primaria);
+    color: #fff;
+    font: .8rem monospace;
+}
+
+.login__rodape {
+    margin: 1.5rem 0 0;
+    font-size: .9rem;
+}
+
+.login__rodape a { color: rgba(255, 255, 255, .75); }
+.login__rodape a:hover { color: #fff; }
+
 /* ---------- Telas pequenas ---------- */
 @media (max-width: 640px) {
     .ficha { grid-template-columns: 1fr; }

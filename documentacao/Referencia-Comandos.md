@@ -411,9 +411,18 @@ Rotas criadas:
 /auth-cliente/registrar    cria uma conta
 /auth-cliente/login        mostra e processa o login
 /auth-cliente/sair         encerra a sessao
+```
 
 Sem prefixo nenhum (`auth:install`), os mesmos arquivos ficam em
 `controllers/AuthController.php`, `views/auth/` e as rotas em `/auth/...`.
+
+As duas telas sao desenhadas em `views/template/layout-login.php`: uma pagina
+isolada, com o formulario centralizado e **sem o menu lateral** — quem ainda
+nao entrou nao abriria nenhum daqueles atalhos. O controller escolhe o
+template no terceiro argumento de `view()`:
+
+```php
+$this->view('auth/login', ['titulo' => 'Entrar'], 'template/layout-login');
 ```
 
 ### 6.1 Como a senha e tratada

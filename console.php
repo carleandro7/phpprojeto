@@ -2121,7 +2121,8 @@ function controllerAutenticacaoGerado(
                     $this->redirecionar('{{ROTA}}/login');
                 }
 
-                $this->view('{{VISTA}}/login', ['titulo' => 'Entrar']);
+                // Template proprio: a tela de login nao mostra o menu lateral.
+                $this->view('{{VISTA}}/login', ['titulo' => 'Entrar'], 'template/layout-login');
             }
 
             /** GET e POST /{{ROTA}}/registrar */
@@ -2158,7 +2159,7 @@ function controllerAutenticacaoGerado(
                     $this->redirecionar('{{ROTA}}/login');
                 }
 
-                $this->view('{{VISTA}}/registrar', ['titulo' => 'Criar conta']);
+                $this->view('{{VISTA}}/registrar', ['titulo' => 'Criar conta'], 'template/layout-login');
             }
 
             /** GET /{{ROTA}}/sair */
@@ -2188,71 +2189,73 @@ function controllerAutenticacaoGerado(
 function viewLoginGerada(string $rota): string
 {
     return strtr(<<<'HTML'
-        <div class="row justify-content-center">
-            <div class="col-12 col-md-7 col-lg-5">
-                <div class="card border-0 shadow-sm p-4">
-                    <h1 class="h3 mb-4">Entrar</h1>
+        <?php
+        /**
+         * Tela de entrada. Desenhada dentro de views/template/layout-login.php,
+         * que nao tem menu lateral: quem ainda nao entrou nao usaria nenhum
+         * daqueles atalhos.
+         */
+        ?>
+        <h1 class="h4 mb-4">Entrar</h1>
 
-                    <form method="post" action="<?= url('{{ROTA}}/login') ?>">
-                        <?= campo_csrf() ?>
-                        <div class="mb-3">
-                            <label class="form-label" for="email">E-mail</label>
-                            <input class="form-control" id="email" type="email" name="email" autocomplete="email" value="<?= e(antigo('email')) ?>" required>
-                        </div>
-                        <div class="mb-4">
-                            <label class="form-label" for="senha">Senha</label>
-                            <input class="form-control" id="senha" type="password" name="senha" autocomplete="current-password" required>
-                        </div>
-                        <button class="btn btn-primary w-100" type="submit">Entrar</button>
-                    </form>
-
-                    <p class="text-center mt-4 mb-0">
-                        <a href="<?= url('{{ROTA}}/registrar') ?>">Criar uma conta</a>
-                    </p>
-                </div>
+        <form method="post" action="<?= url('{{ROTA}}/login') ?>">
+            <?= campo_csrf() ?>
+            <div class="mb-3">
+                <label class="form-label" for="email">E-mail</label>
+                <input class="form-control" id="email" type="email" name="email" autocomplete="email" value="<?= e(antigo('email')) ?>" required>
             </div>
-        </div>
+            <div class="mb-4">
+                <label class="form-label" for="senha">Senha</label>
+                <input class="form-control" id="senha" type="password" name="senha" autocomplete="current-password" required>
+            </div>
+            <button class="btn btn-primary w-100" type="submit">Entrar</button>
+        </form>
+
+        <p class="text-center mt-4 mb-0">
+            <a href="<?= url('{{ROTA}}/registrar') ?>">Criar uma conta</a>
+        </p>
         HTML, ['{{ROTA}}' => $rota]);
 }
 
 function viewRegistroGerada(bool $temNome, string $rota): string
 {
+    // O "\n\n    " final e a linha em branco mais a indentacao do campo
+    // seguinte: sem ele o proximo <div> sairia colado na margem.
     $campoNome = $temNome ? <<<'HTML'
-                    <div class="mb-3">
-                            <label class="form-label" for="nome">Nome</label>
-                            <input class="form-control <?= tem_erro('nome') ? 'is-invalid' : '' ?>" id="nome" type="text" name="nome" autocomplete="name" value="<?= e(antigo('nome')) ?>" required>
-                            <?php if ($mensagem = erro_de('nome')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
-                        </div>
-
-        HTML : '';
+        <div class="mb-3">
+                <label class="form-label" for="nome">Nome</label>
+                <input class="form-control <?= tem_erro('nome') ? 'is-invalid' : '' ?>" id="nome" type="text" name="nome" autocomplete="name" value="<?= e(antigo('nome')) ?>" required>
+                <?php if ($mensagem = erro_de('nome')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+            </div>
+        HTML . "\n\n    " : '';
 
     return strtr(<<<'HTML'
-        <div class="row justify-content-center">
-            <div class="col-12 col-md-7 col-lg-5">
-                <div class="card border-0 shadow-sm p-4">
-                    <h1 class="h3 mb-4">Criar conta</h1>
+        <?php
+        /**
+         * Tela de cadastro. Assim como a de entrada, e desenhada dentro de
+         * views/template/layout-login.php, sem o menu lateral.
+         */
+        ?>
+        <h1 class="h4 mb-4">Criar conta</h1>
 
-                    <form method="post" action="<?= url('{{ROTA}}/registrar') ?>">
-                        <?= campo_csrf() ?>
-                        {{CAMPO_NOME}}<div class="mb-3">
-                            <label class="form-label" for="email">E-mail</label>
-                            <input class="form-control <?= tem_erro('email') ? 'is-invalid' : '' ?>" id="email" type="email" name="email" autocomplete="email" value="<?= e(antigo('email')) ?>" required>
-                            <?php if ($mensagem = erro_de('email')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
-                        </div>
-                        <div class="mb-4">
-                            <label class="form-label" for="senha">Senha</label>
-                            <input class="form-control <?= tem_erro('senha') ? 'is-invalid' : '' ?>" id="senha" type="password" name="senha" autocomplete="new-password" minlength="{{SENHA_MINIMA}}" required>
-                            <?php if ($mensagem = erro_de('senha')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
-                        </div>
-                        <button class="btn btn-primary w-100" type="submit">Criar conta</button>
-                    </form>
-
-                    <p class="text-center mt-4 mb-0">
-                        <a href="<?= url('{{ROTA}}/login') ?>">Ja tenho uma conta</a>
-                    </p>
-                </div>
+        <form method="post" action="<?= url('{{ROTA}}/registrar') ?>">
+            <?= campo_csrf() ?>
+            {{CAMPO_NOME}}<div class="mb-3">
+                <label class="form-label" for="email">E-mail</label>
+                <input class="form-control <?= tem_erro('email') ? 'is-invalid' : '' ?>" id="email" type="email" name="email" autocomplete="email" value="<?= e(antigo('email')) ?>" required>
+                <?php if ($mensagem = erro_de('email')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
             </div>
-        </div>
+            <div class="mb-4">
+                <label class="form-label" for="senha">Senha</label>
+                <input class="form-control <?= tem_erro('senha') ? 'is-invalid' : '' ?>" id="senha" type="password" name="senha" autocomplete="new-password" minlength="{{SENHA_MINIMA}}" required>
+                <?php if ($mensagem = erro_de('senha')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+            </div>
+            <button class="btn btn-primary w-100" type="submit">Criar conta</button>
+        </form>
+
+        <p class="text-center mt-4 mb-0">
+            <a href="<?= url('{{ROTA}}/login') ?>">Ja tenho uma conta</a>
+        </p>
         HTML, [
         '{{ROTA}}'         => $rota,
         '{{CAMPO_NOME}}'   => $campoNome,

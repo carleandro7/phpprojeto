@@ -3,8 +3,8 @@
 Este documento lista os comandos disponiveis no framework. Execute todos a
 partir da pasta raiz do projeto.
 
-Para o passo a passo comentado, veja o
-[Tutorial dos comandos](Tutorial-Comandos.md).
+Para o passo a passo comentado — uma aplicacao construida do zero ao fim —
+veja o [Tutorial](Tutorial-Comandos.md).
 
 ## 1. Ver a ajuda do console
 

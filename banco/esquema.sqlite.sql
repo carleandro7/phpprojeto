@@ -1,2 +1,0 @@
--- O framework comeca sem tabelas da aplicacao.
--- Use: php console.php scaffold:crud Nome campo:string

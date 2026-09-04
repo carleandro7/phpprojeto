@@ -10,8 +10,8 @@ use RuntimeException;
  * Responsavel pela conexao com o banco de dados.
  *
  * Usa o padrao "Singleton": a conexao e criada uma unica vez e reaproveitada
- * em toda a aplicacao. Suporta SQLite (padrao, nao precisa instalar nada)
- * e MySQL (para quando a turma usar XAMPP / phpMyAdmin).
+ * em toda a aplicacao. O banco e MySQL/MariaDB (o do XAMPP), configurado em
+ * configuracoes/banco.php.
  */
 class Database
 {
@@ -47,78 +47,55 @@ class Database
     }
 
     /**
-     * Monta a conexao de acordo com o driver escolhido em configuracoes/banco.php.
+     * Monta a conexao com o MySQL configurado em configuracoes/banco.php.
      */
     private static function criar(): PDO
     {
-        $driver  = Config::obter('banco.driver', 'sqlite');
-        $opcoes  = [
-            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES   => false,
-        ];
+        $c   = Config::obter('banco.mysql');
+        $dsn = sprintf(
+            'mysql:host=%s;port=%d;dbname=%s;charset=%s',
+            $c['host'],
+            $c['porta'],
+            $c['banco'],
+            $c['charset']
+        );
 
         try {
-            if ($driver === 'sqlite') {
-                $arquivo = Config::obter('banco.sqlite.arquivo');
-
-                if ($arquivo !== ':memory:' && !is_dir(dirname($arquivo))) {
-                    mkdir(dirname($arquivo), 0777, true);
-                }
-
-                $pdo = new PDO('sqlite:' . $arquivo, null, null, $opcoes);
-                // Liga a checagem de chaves estrangeiras (desligada por padrao no SQLite).
-                $pdo->exec('PRAGMA foreign_keys = ON');
-
-                return $pdo;
-            }
-
-            if ($driver === 'mysql') {
-                $c   = Config::obter('banco.mysql');
-                $dsn = sprintf(
-                    'mysql:host=%s;port=%d;dbname=%s;charset=%s',
-                    $c['host'],
-                    $c['porta'],
-                    $c['banco'],
-                    $c['charset']
-                );
-
-                return new PDO($dsn, $c['usuario'], $c['senha'], $opcoes);
-            }
+            return new PDO($dsn, $c['usuario'], $c['senha'], [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES   => false,
+            ]);
         } catch (PDOException $e) {
             throw new RuntimeException(
-                'Nao foi possivel conectar ao banco de dados: ' . $e->getMessage(),
+                "Nao foi possivel conectar ao banco \"{$c['banco']}\" em {$c['host']}: "
+                . $e->getMessage() . "\n"
+                . "Confira se o MySQL esta iniciado (painel do XAMPP) e se usuario e senha\n"
+                . 'em configuracoes/banco.php estao corretos. Depois rode: php instalar.php',
                 0,
                 $e
             );
         }
-
-        throw new RuntimeException("Driver de banco desconhecido: {$driver}");
     }
 
     /**
-     * Cria o banco de dados no MySQL caso ele ainda nao exista.
+     * Cria o banco de dados caso ele ainda nao exista.
      *
-     * No SQLite isso nao e preciso: o arquivo nasce junto com a conexao.
-     * No MySQL, sem isso, seria obrigatorio abrir o phpMyAdmin e criar o
-     * banco na mao antes de rodar o instalador.
+     * Sem isso seria obrigatorio abrir o phpMyAdmin e criar o banco na mao
+     * antes de rodar o instalador.
      *
      * Conectamos ao servidor SEM escolher um banco (o DSN nao leva dbname),
      * criamos o banco e so entao a conexao normal consegue se conectar.
      *
-     * @return bool true se chegou a mexer no servidor (driver mysql)
+     * @param string|null $banco nome do banco; por padrao o de configuracoes/banco.php
      */
-    public static function criarBancoSeNaoExistir(): bool
+    public static function criarBancoSeNaoExistir(?string $banco = null): bool
     {
-        if (Config::obter('banco.driver', 'sqlite') !== 'mysql') {
-            return false;
-        }
-
         $c = Config::obter('banco.mysql');
 
         // O nome do banco nao pode ser parametro do PDO (e identificador,
         // nao valor), entao passa pela validacao da classe Sql.
-        $nome    = Sql::identificador($c['banco'], 'banco de dados');
+        $nome    = Sql::identificador($banco ?? $c['banco'], 'banco de dados');
         $charset = Sql::identificador($c['charset'], 'charset');
 
         $dsn = sprintf('mysql:host=%s;port=%d;charset=%s', $c['host'], $c['porta'], $charset);
@@ -141,27 +118,18 @@ class Database
     }
 
     /**
-     * Cria as tabelas lendo o arquivo de esquema correspondente ao driver.
-     * Ex.: banco/esquema.sqlite.sql
+     * Cria as tabelas lendo banco/esquema.sql, o arquivo que os comandos do
+     * console mantem atualizado.
      */
     public static function migrar(): void
     {
-        $driver  = Config::obter('banco.driver', 'sqlite');
-        $arquivo = CAMINHO_RAIZ . '/banco/esquema.' . $driver . '.sql';
+        $arquivo = CAMINHO_RAIZ . '/banco/esquema.sql';
 
         if (!is_file($arquivo)) {
             throw new RuntimeException("Arquivo de esquema nao encontrado: {$arquivo}");
         }
 
         self::executarArquivoSql($arquivo);
-    }
-
-    /**
-     * Insere os registros de exemplo (seed).
-     */
-    public static function popular(): void
-    {
-        self::executarArquivoSql(CAMINHO_RAIZ . '/banco/dados_exemplo.sql');
     }
 
     /**

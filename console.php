@@ -165,8 +165,7 @@ function gerarCrud(array $argumentos): void
     $esquemas = lerEsquemas();
 
     try {
-        registrarEsquema($tabela, esquema($tabela, $campos, false), false);
-        registrarEsquema($tabela, esquema($tabela, $campos, true), true);
+        registrarEsquema($tabela, esquema($tabela, $campos));
 
         Database::migrar();
         sincronizarColunas($tabela, $campos);
@@ -189,7 +188,7 @@ function gerarCrud(array $argumentos): void
         echo '  + ' . caminhoRelativo($caminho) . "\n";
     }
 
-    echo '  ~ banco/esquema.sqlite.sql, banco/esquema.mysql.sql' . "\n";
+    echo '  ~ banco/esquema.sql' . "\n";
 
     if ($noMenu) {
         echo '  ~ configuracoes/menu.php' . "\n";
@@ -300,12 +299,10 @@ function tabelaConhecida(string $tabela): bool
         return true;
     }
 
-    foreach (['sqlite', 'mysql'] as $driver) {
-        $arquivo = CAMINHO_BANCO . "/esquema.{$driver}.sql";
+    $arquivo = arquivoEsquema();
 
-        if (is_file($arquivo) && preg_match(padraoCreateTable($tabela), (string) file_get_contents($arquivo))) {
-            return true;
-        }
+    if (is_file($arquivo) && preg_match(padraoCreateTable($tabela), (string) file_get_contents($arquivo))) {
+        return true;
     }
 
     try {
@@ -378,8 +375,7 @@ function resolverProviderDoCrud(string $provider): string
 
 function sincronizarColunas(string $tabela, array $campos): void
 {
-    $pdo       = Database::conexao();
-    $driver    = Config::obter('banco.driver', 'sqlite');
+    $pdo        = Database::conexao();
     $existentes = colunasDaTabela($tabela);
 
     foreach ($campos as [$nome, $tipo]) {
@@ -388,24 +384,16 @@ function sincronizarColunas(string $tabela, array $campos): void
         }
 
         // Colunas novas entram como NULL: a tabela pode ja ter registros.
-        $pdo->exec("ALTER TABLE {$tabela} ADD COLUMN {$nome} " . tipoSql($tipo, $driver === 'mysql') . ' NULL');
+        $pdo->exec("ALTER TABLE `{$tabela}` ADD COLUMN `{$nome}` " . tipoSql($tipo) . ' NULL');
     }
 }
 
 function colunasDaTabela(string $tabela): array
 {
-    $pdo     = Database::conexao();
-    $driver  = Config::obter('banco.driver', 'sqlite');
     $colunas = [];
 
-    if ($driver === 'mysql') {
-        foreach ($pdo->query("SHOW COLUMNS FROM `{$tabela}`") as $coluna) {
-            $colunas[] = $coluna['Field'];
-        }
-    } else {
-        foreach ($pdo->query("PRAGMA table_info({$tabela})") as $coluna) {
-            $colunas[] = $coluna['name'];
-        }
+    foreach (Database::conexao()->query("SHOW COLUMNS FROM `{$tabela}`") as $coluna) {
+        $colunas[] = $coluna['Field'];
     }
 
     return $colunas;
@@ -418,23 +406,14 @@ function colunasDaTabela(string $tabela): array
 function garantirIndiceUnico(string $tabela, string $coluna): bool
 {
     $pdo    = Database::conexao();
-    $driver = Config::obter('banco.driver', 'sqlite');
     $indice = "idx_{$tabela}_{$coluna}_unico";
 
     try {
-        if ($driver === 'mysql') {
-            $existe = $pdo->query("SHOW INDEX FROM `{$tabela}` WHERE Key_name = '{$indice}'")->fetch();
-
-            if ($existe !== false) {
-                return true;
-            }
-
-            $pdo->exec("CREATE UNIQUE INDEX `{$indice}` ON `{$tabela}` (`{$coluna}`)");
-
+        if ($pdo->query("SHOW INDEX FROM `{$tabela}` WHERE Key_name = '{$indice}'")->fetch() !== false) {
             return true;
         }
 
-        $pdo->exec("CREATE UNIQUE INDEX IF NOT EXISTS {$indice} ON {$tabela} ({$coluna})");
+        $pdo->exec("CREATE UNIQUE INDEX `{$indice}` ON `{$tabela}` (`{$coluna}`)");
 
         return true;
     } catch (Throwable $e) {
@@ -446,32 +425,24 @@ function garantirIndiceUnico(string $tabela, string $coluna): bool
     }
 }
 
-function tipoSql(string $tipo, bool $mysql): string
+function tipoSql(string $tipo): string
 {
-    if ($mysql) {
-        return match ($tipo) {
-            'integer'  => 'INT',
-            'decimal'  => 'DECIMAL(12,2)',
-            'boolean'  => 'TINYINT(1)',
-            'date'     => 'DATE',
-            'datetime' => 'DATETIME',
-            'time'     => 'TIME',
-            'text'     => 'TEXT',
-            default    => 'VARCHAR(255)',
-        };
-    }
-
     return match ($tipo) {
-        'integer', 'boolean' => 'INTEGER',
-        'decimal'            => 'REAL',
-        default              => 'TEXT',
+        'integer'  => 'INT',
+        'decimal'  => 'DECIMAL(12,2)',
+        'boolean'  => 'TINYINT(1)',
+        'date'     => 'DATE',
+        'datetime' => 'DATETIME',
+        'time'     => 'TIME',
+        'text'     => 'TEXT',
+        default    => 'VARCHAR(255)',
     };
 }
 
-function esquema(string $tabela, array $campos, bool $mysql): string
+function esquema(string $tabela, array $campos): string
 {
     $colunas = array_map(
-        fn (array $campo): string => "{$campo[0]} " . tipoSql($campo[1], $mysql) . ' NULL',
+        fn (array $campo): string => "{$campo[0]} " . tipoSql($campo[1]) . ' NULL',
         $campos
     );
 
@@ -482,9 +453,10 @@ function esquema(string $tabela, array $campos, bool $mysql): string
 
     $definicoes = implode(",\n    ", array_merge($colunas, $chaves));
 
-    return $mysql
-        ? "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INT AUTO_INCREMENT PRIMARY KEY,\n    {$definicoes}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
-        : "CREATE TABLE IF NOT EXISTS {$tabela} (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    {$definicoes}\n);";
+    return "CREATE TABLE IF NOT EXISTS {$tabela} (\n"
+        . "    id INT AUTO_INCREMENT PRIMARY KEY,\n"
+        . "    {$definicoes}\n"
+        . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;';
 }
 
 /** Expressao que encontra o CREATE TABLE de uma tabela especifica. */
@@ -502,9 +474,9 @@ function padraoCreateTable(string $tabela): string
  * Sem isso o arquivo acumularia dois "CREATE TABLE IF NOT EXISTS produtos"
  * e uma instalacao limpa criaria a tabela sem as colunas novas.
  */
-function registrarEsquema(string $tabela, string $definicao, bool $mysql): void
+function registrarEsquema(string $tabela, string $definicao): void
 {
-    $arquivo  = arquivoEsquema($mysql);
+    $arquivo  = arquivoEsquema();
     $conteudo = is_file($arquivo) ? (string) file_get_contents($arquivo) : '';
     $padrao   = padraoCreateTable($tabela);
 
@@ -517,25 +489,21 @@ function registrarEsquema(string $tabela, string $definicao, bool $mysql): void
     file_put_contents($arquivo, ltrim((string) $conteudo, "\n"), LOCK_EX);
 }
 
-function arquivoEsquema(bool $mysql): string
+function arquivoEsquema(): string
 {
-    return CAMINHO_BANCO . '/esquema.' . ($mysql ? 'mysql' : 'sqlite') . '.sql';
+    return CAMINHO_BANCO . '/esquema.sql';
 }
 
-/** @return array<string,string> */
+/**
+ * Copia do esquema atual, para desfazer se algo falhar no meio do comando.
+ *
+ * @return array<string,string>
+ */
 function lerEsquemas(): array
 {
-    $copias = [];
+    $arquivo = arquivoEsquema();
 
-    foreach ([false, true] as $mysql) {
-        $arquivo = arquivoEsquema($mysql);
-
-        if (is_file($arquivo)) {
-            $copias[$arquivo] = (string) file_get_contents($arquivo);
-        }
-    }
-
-    return $copias;
+    return is_file($arquivo) ? [$arquivo => (string) file_get_contents($arquivo)] : [];
 }
 
 function restaurarEsquemas(array $copias): void
@@ -1297,15 +1265,6 @@ function verGerado(string $pasta, array $campos): string
 // Geradores: testes
 // =====================================================================
 
-function tipoSqlTeste(string $tipo): string
-{
-    return match ($tipo) {
-        'integer', 'boolean' => 'INTEGER',
-        'decimal'            => 'REAL',
-        default              => 'TEXT',
-    } . ' NULL';
-}
-
 function valorTeste(string $tipo, bool $atualizado = false, string $nome = ''): mixed
 {
     // Um campo chamado "email" ganha a regra email() no model gerado: com o
@@ -1364,11 +1323,11 @@ function tabelasDoTeste(string $tabela, array $campos): string
             continue;
         }
 
-        $linhas[] = "            '{$campo[2]}' => 'CREATE TABLE {$campo[2]} (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NULL)',";
+        $linhas[] = "            '{$campo[2]}' => 'CREATE TABLE {$campo[2]} (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(255) NULL)',";
     }
 
     $linhas[] = "            '{$tabela}' => \"CREATE TABLE {$tabela} (\n"
-        . "                id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+        . "                id INT AUTO_INCREMENT PRIMARY KEY,\n"
         . '                ' . definicoesDaTabelaDeTeste($tabela, $campos) . "\n"
         . '            )",';
 
@@ -1394,7 +1353,7 @@ function idsDasRelacoes(array $campos): string
 function definicoesDaTabelaDeTeste(string $tabela, array $campos): string
 {
     $colunas = array_map(
-        fn (array $campo): string => "{$campo[0]} " . tipoSqlTeste($campo[1]),
+        fn (array $campo): string => "{$campo[0]} " . tipoSql($campo[1]) . ' NULL',
         $campos
     );
 
@@ -1718,12 +1677,10 @@ function gerarAutenticacao(array $argumentos): void
     $esquemas = lerEsquemas();
 
     try {
-        foreach ([false, true] as $mysql) {
-            if ($modelo['novo']) {
-                registrarEsquema($modelo['tabela'], esquemaAutenticacaoPadrao($mysql), $mysql);
-            } else {
-                acrescentarColunasAoEsquema($modelo['tabela'], ['email', 'senha'], $mysql);
-            }
+        if ($modelo['novo']) {
+            registrarEsquema($modelo['tabela'], esquemaAutenticacaoPadrao());
+        } else {
+            acrescentarColunasAoEsquema($modelo['tabela'], ['email', 'senha']);
         }
 
         Database::migrar();
@@ -1808,7 +1765,7 @@ function gerarAutenticacao(array $argumentos): void
         echo '  ~ ' . caminhoRelativo($modelo['arquivo']) . "\n";
     }
 
-    echo '  ~ banco/esquema.sqlite.sql, banco/esquema.mysql.sql' . "\n\n";
+    echo '  ~ banco/esquema.sql' . "\n\n";
 
     if ($provider === Nucleo\Autenticacao::PADRAO) {
         echo "Login em /{$rota}: e o login unico do projeto.\n\n";
@@ -1941,9 +1898,9 @@ function resolverModeloAutenticacao(?string $alvo): array
  * e o CRUD gerado antes do login continua cadastrando sem e-mail e senha.
  * Quem exige credenciais e o model (criarComSenha) e a tela de cadastro.
  */
-function acrescentarColunasAoEsquema(string $tabela, array $colunas, bool $mysql): void
+function acrescentarColunasAoEsquema(string $tabela, array $colunas): void
 {
-    $arquivo  = arquivoEsquema($mysql);
+    $arquivo  = arquivoEsquema();
     $conteudo = is_file($arquivo) ? (string) file_get_contents($arquivo) : '';
     $padrao   = padraoCreateTable($tabela);
 
@@ -1962,7 +1919,7 @@ function acrescentarColunasAoEsquema(string $tabela, array $colunas, bool $mysql
             continue;
         }
 
-        $definicao = "{$coluna} " . tipoSql('string', $mysql) . ' NULL';
+        $definicao = "{$coluna} " . tipoSql('string') . ' NULL';
 
         // Uma coluna nova nunca pode cair depois de um CONSTRAINT: e assim
         // que se le um CREATE TABLE, e era exatamente isso que quebrava ao
@@ -1989,23 +1946,15 @@ function acrescentarColunasAoEsquema(string $tabela, array $colunas, bool $mysql
     }
 }
 
-function esquemaAutenticacaoPadrao(bool $mysql): string
+function esquemaAutenticacaoPadrao(): string
 {
-    return $mysql
-        ? "CREATE TABLE IF NOT EXISTS usuarios (\n"
-            . "    id INT AUTO_INCREMENT PRIMARY KEY,\n"
-            . "    nome VARCHAR(100) NOT NULL,\n"
-            . "    email VARCHAR(150) NOT NULL UNIQUE,\n"
-            . "    senha VARCHAR(255) NOT NULL,\n"
-            . "    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\n"
-            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;'
-        : "CREATE TABLE IF NOT EXISTS usuarios (\n"
-            . "    id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
-            . "    nome TEXT NOT NULL,\n"
-            . "    email TEXT NOT NULL UNIQUE,\n"
-            . "    senha TEXT NOT NULL,\n"
-            . "    criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n"
-            . ');';
+    return "CREATE TABLE IF NOT EXISTS usuarios (\n"
+        . "    id INT AUTO_INCREMENT PRIMARY KEY,\n"
+        . "    nome VARCHAR(100) NOT NULL,\n"
+        . "    email VARCHAR(150) NOT NULL UNIQUE,\n"
+        . "    senha VARCHAR(255) NOT NULL,\n"
+        . "    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\n"
+        . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;';
 }
 
 /**
@@ -2347,7 +2296,7 @@ function testeAutenticacaoGerado(
 
                 $this->recriarTabelas([
                     '{{TABELA}}' => "CREATE TABLE {{TABELA}} (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INT AUTO_INCREMENT PRIMARY KEY,
                         {{DEFINICOES}}
                     )",
                 ]);
@@ -2655,8 +2604,7 @@ function camposPesquisados(string $tabela, array $pedidos, string $classe): arra
 
     if ($colunas === []) {
         throw new RuntimeException(
-            "Nao encontrei a tabela \"{$tabela}\" em banco/esquema.mysql.sql nem em"
-            . " banco/esquema.sqlite.sql.\n"
+            "Nao encontrei a tabela \"{$tabela}\" em banco/esquema.sql.\n"
             . "Gere o CRUD antes:\n  php console.php scaffold:crud {$tabela} nome:string"
         );
     }
@@ -2705,29 +2653,24 @@ function camposPesquisados(string $tabela, array $pedidos, string $classe): arra
 }
 
 /**
- * Le as colunas de uma tabela direto do arquivo de esquema, sem precisar de
- * banco ligado. O esquema MySQL vem primeiro porque guarda o tipo original
- * (TINYINT(1), DATE, VARCHAR...); o do SQLite e o plano B.
+ * Le as colunas de uma tabela direto de banco/esquema.sql, sem precisar de
+ * banco ligado.
  *
  * @return array<string,array{0:string,1:?string}> nome => [tipo, tabela pai]
  */
 function colunasDoEsquema(string $tabela): array
 {
-    foreach ([true, false] as $mysql) {
-        $arquivo = arquivoEsquema($mysql);
+    $arquivo = arquivoEsquema();
 
-        if (!is_file($arquivo)) {
-            continue;
-        }
-
-        if (!preg_match(padraoCreateTable($tabela), (string) file_get_contents($arquivo), $encontrado)) {
-            continue;
-        }
-
-        return interpretarCreateTable($encontrado[0]);
+    if (!is_file($arquivo)) {
+        return [];
     }
 
-    return [];
+    if (!preg_match(padraoCreateTable($tabela), (string) file_get_contents($arquivo), $encontrado)) {
+        return [];
+    }
+
+    return interpretarCreateTable($encontrado[0]);
 }
 
 /**
@@ -2785,9 +2728,8 @@ function interpretarCreateTable(string $sql): array
 /**
  * Caminho inverso do tipoSql(): do tipo SQL de volta para o tipo do scaffold.
  *
- * O esquema do SQLite guarda menos informacao (tudo vira TEXT, INTEGER ou
- * REAL), entao um boolean lido de la aparece como numero. Basta regerar o
- * CRUD para o esquema MySQL ficar disponivel com os tipos completos.
+ * E o que permite ao scaffold:pesquisa descobrir sozinho que "ativo" e um
+ * boolean (TINYINT(1)) e "nascimento" uma data, sem pedir os tipos de novo.
  */
 function tipoDoEsquema(string $sql): string
 {

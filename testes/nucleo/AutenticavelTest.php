@@ -23,7 +23,7 @@ class AutenticavelTest extends TesteBase
 
     public function preparar(): void
     {
-        Database::conexao()->exec('CREATE TABLE IF NOT EXISTS autenticaveis_teste (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NULL, email TEXT NULL, senha TEXT NULL)');
+        Database::conexao()->exec('CREATE TABLE IF NOT EXISTS autenticaveis_teste (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(255) NULL, email VARCHAR(255) NULL, senha VARCHAR(255) NULL)');
         $this->limparTabela('autenticaveis_teste');
         $this->limparSessao();
         $this->modelo = new ModeloAutenticavelTeste();

@@ -1,9 +1,3 @@
-# Banco de dados SQLite gerado pelo instalar.php
-banco/dados.sqlite
-banco/*.sqlite-journal
-banco/*.sqlite-wal
-banco/*.sqlite-shm
-
 # Configuracoes locais de cada desenvolvedor (senha do MySQL, etc.)
 configuracoes/banco.local.php
 

@@ -3,9 +3,12 @@
 Base MVC para criar aplicacoes PHP sem dependencias externas. O projeto comeca
 sem tabelas, dados ou entidades predefinidas.
 
-Requisitos: PHP 8.1 ou superior e SQLite ou MySQL/MariaDB.
+Requisitos: PHP 8.1 ou superior e MySQL/MariaDB (o do XAMPP serve).
 
 ## Inicio rapido
+
+Antes: inicie o MySQL (painel do XAMPP) e confira usuario e senha em
+`configuracoes/banco.php`.
 
 ```bash
 php instalar.php
@@ -31,15 +34,15 @@ php console.php scaffold:crud tabela campo:tipo campo2:tipo [opcoes]
 
 Tipos aceitos: `string`, `text`, `integer`, `decimal`, `boolean`, `date`,
 `datetime` e `time`. O comando gera modelo (com regras de validacao),
-controller, views, testes de model e de controller, e o esquema para
-SQLite/MySQL. Ele nao sobrescreve arquivos existentes.
+controller, views, testes de model e de controller, e a tabela em
+`banco/esquema.sql`. Ele nao sobrescreve arquivos existentes.
 
 Opcoes:
 
 | Opcao | O que faz |
 |---|---|
-| `--auth` | exige login em todas as rotas do recurso (provider padrao, `/auth`) |
-| `--auth=prefixo` | mesma coisa, usando um provider nomeado (`/auth-prefixo`) |
+| `--auth` | exige login em todas as rotas do recurso: usa `/auth` ou, quando so existe uma tela de login instalada, essa tela |
+| `--auth=prefixo` | mesma coisa, escolhendo o provider (`/auth-prefixo`) |
 | `--modelo=Nome` | define o nome da classe quando o plural automatico erra |
 | `--sem-menu` | nao adiciona o recurso a `configuracoes/menu.php` |
 | `-v` | mostra os detalhes tecnicos quando um comando falha |
@@ -175,10 +178,13 @@ php testes/executar.php              # tudo
 php testes/executar.php ProdutoTest  # filtro por classe ou metodo
 ```
 
-Os testes rodam em um SQLite em memoria e cada classe recria as proprias
-tabelas, entao a ordem de execucao nao muda o resultado.
+Os testes rodam em um banco MySQL proprio (`banco_testes` em
+`configuracoes/banco.php`), apagado e recriado a cada execucao, e cada classe
+recria as proprias tabelas — a ordem de execucao nao muda o resultado e os
+dados da aplicacao nunca sao tocados.
 
 ## Documentacao
 
-- [Tutorial dos comandos](documentacao/Tutorial-Comandos.md) — passo a passo
+- [Tutorial: do zero a um sistema completo](documentacao/Tutorial-Comandos.md) — constroi
+  uma aplicacao inteira, passo a passo
 - [Referencia de comandos](documentacao/Referencia-Comandos.md) — sintaxe completa

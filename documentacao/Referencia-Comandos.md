@@ -33,12 +33,14 @@ php instalar.php
 O instalador:
 
 - le `configuracoes/banco.php`;
-- cria o banco MySQL, caso necessario;
-- executa o esquema do driver configurado;
+- cria o banco da aplicacao, caso ainda nao exista;
+- cria o banco dos testes (`banco_testes`), caso ainda nao exista;
+- executa `banco/esquema.sql`;
 - nao cria tabelas ou dados de exemplo por conta propria.
 
-O driver pode ser `mysql` ou `sqlite`. Depois de alterar o driver ou o
-esquema, execute o instalador novamente.
+O banco e MySQL/MariaDB — o do XAMPP serve. Inicie o servico antes e confira
+usuario e senha em `configuracoes/banco.php`. Depois de mexer no esquema,
+rode o instalador de novo.
 
 ## 3. Gerar um CRUD
 
@@ -67,8 +69,7 @@ testes/controllers/ProdutosControllerTest.php
 E atualiza:
 
 ```text
-banco/esquema.sqlite.sql
-banco/esquema.mysql.sql
+banco/esquema.sql
 configuracoes/menu.php
 ```
 
@@ -126,16 +127,16 @@ php console.php scaffold:crud produtos \
     horario:time
 ```
 
-| Tipo | SQLite | MySQL | Campo HTML |
-|---|---|---|---|
-| `string` | `TEXT` | `VARCHAR(255)` | `input type="text"` |
-| `text` | `TEXT` | `TEXT` | `textarea` |
-| `integer` | `INTEGER` | `INT` | `input type="number"` |
-| `decimal` | `REAL` | `DECIMAL(12,2)` | `input type="number" step="0.01"` |
-| `boolean` | `INTEGER` | `TINYINT(1)` | checkbox (grava `1` ou `0`) |
-| `date` | `TEXT` | `DATE` | `input type="date"` |
-| `datetime` | `TEXT` | `DATETIME` | `input type="datetime-local"` |
-| `time` | `TEXT` | `TIME` | `input type="time"` |
+| Tipo | Coluna no MySQL | Campo HTML |
+|---|---|---|
+| `string` | `VARCHAR(255)` | `input type="text"` |
+| `text` | `TEXT` | `textarea` |
+| `integer` | `INT` | `input type="number"` |
+| `decimal` | `DECIMAL(12,2)` | `input type="number" step="0.01"` |
+| `boolean` | `TINYINT(1)` | checkbox (grava `1` ou `0`) |
+| `date` | `DATE` | `input type="date"` |
+| `datetime` | `DATETIME` | `input type="datetime-local"` |
+| `time` | `TIME` | `input type="time"` |
 
 Campos `boolean` sempre gravam `1` ou `0`: o formulario acompanha um
 `<input type="hidden">` porque o navegador nao envia nada quando a caixa esta
@@ -186,7 +187,7 @@ O formato `campo_id:belongs_to=tabela_pai` faz o scaffold:
 - criar no model `Matricula` o metodo `turmas()`, que carrega os registros pai;
 - enviar a lista `turmas` pelo controller nas telas de cadastro e edicao;
 - gerar um `<select>` Bootstrap 5 com as opcoes;
-- criar a restricao `FOREIGN KEY` nos esquemas SQLite e MySQL;
+- criar a restricao `FOREIGN KEY` em `banco/esquema.sql`;
 - marcar o campo como obrigatorio na validacao do model;
 - incluir a verificacao da relacao no teste gerado.
 
@@ -270,7 +271,7 @@ ambos volta.
 
 ### 4.1 Campo e filtro de cada tipo
 
-Os tipos vem de `banco/esquema.mysql.sql`; ninguem precisa informa-los de novo.
+Os tipos vem de `banco/esquema.sql`; ninguem precisa informa-los de novo.
 
 | Tipo da coluna | Campo no formulario | Filtro no SQL |
 |---|---|---|
@@ -287,10 +288,6 @@ Os tipos vem de `banco/esquema.mysql.sql`; ninguem precisa informa-los de novo.
 
 O `boolean` vira uma lista de tres estados de proposito: uma caixa de marcar
 desmarcada nao diz se o visitante quer os registros com `Nao` ou quer todos.
-
-Quando so existe o esquema do SQLite, os tipos chegam menos detalhados (tudo e
-`TEXT`, `INTEGER` ou `REAL`), entao um `boolean` aparece como campo de numero.
-Regerar o CRUD recria o esquema MySQL e resolve.
 
 ### 4.2 Como a pesquisa se comporta
 
@@ -400,12 +397,12 @@ O comando:
 Gera ou atualiza (exemplo de `auth:install Cliente`):
 
 ```text
-banco/esquema.sqlite.sql, banco/esquema.mysql.sql
 modelos/Cliente.php                              (atualizado)
 controllers/AuthClienteController.php
 views/auth/cliente/login.php
 views/auth/cliente/registrar.php
 testes/controllers/AuthClienteControllerTest.php
+banco/esquema.sql
 ```
 
 Rotas criadas:
@@ -546,6 +543,12 @@ php testes/executar.php
 ```
 
 Executa todos os arquivos terminados em `Test.php` dentro de `testes/`.
+
+Os testes rodam no banco indicado por `banco_testes` em
+`configuracoes/banco.php` (por padrao `framework_aula_testes`), que e apagado
+e recriado a cada execucao — os dados da aplicacao nunca sao tocados. O MySQL
+precisa estar ligado; se nao estiver, o comando avisa antes de rodar qualquer
+teste.
 
 Os testes gerados pelo scaffold verificam:
 

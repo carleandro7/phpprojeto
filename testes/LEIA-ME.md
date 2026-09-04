@@ -41,18 +41,32 @@ php testes/executar.php validacao        # qualquer teste com "validacao" no nom
 
 ## Banco de dados
 
-Os testes usam um **SQLite em memória**, criado vazio a cada execução
-(veja `bootstrap.php`). Rodar os testes **nunca** altera `banco/dados.sqlite`.
+Os testes rodam em um **banco MySQL só deles**, o `banco_testes` de
+`configuracoes/banco.php` (por padrão `framework_aula_testes`). Esse banco é
+apagado e recriado a cada execução, no `bootstrap.php`, então rodar os testes
+**nunca** altera os dados da aplicação.
 
-Por isso cada teste precisa criar os dados de que precisa, normalmente no
-`preparar()`:
+Precisa do MySQL ligado (XAMPP). Se ele estiver fora do ar, o comando avisa
+antes de rodar qualquer teste.
+
+Como o banco nasce vazio, cada classe cria as tabelas e os dados de que
+precisa, normalmente no `preparar()`:
 
 ```php
 public function preparar(): void
 {
-    $this->limparTabela('produtos');
+    $this->recriarTabelas([
+        'produtos' => 'CREATE TABLE produtos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(255) NULL,
+            preco DECIMAL(12,2) NULL
+        )',
+    ]);
 }
 ```
+
+`recriarTabelas()` apaga e recria; `limparTabela('produtos')` só esvazia uma
+tabela que já existe.
 
 ## Consulta rápida
 

@@ -110,8 +110,7 @@ class Sql
      * Caractere de escape usado nas buscas com LIKE.
      *
      * Nao usamos a barra invertida de proposito: no MySQL ela ja e especial
-     * dentro de textos e quebraria o comando. O "!" funciona igual em
-     * SQLite e MySQL.
+     * dentro de textos e quebraria o comando.
      */
     public const CARACTERE_ESCAPE = '!';
 

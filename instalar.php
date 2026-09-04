@@ -27,24 +27,20 @@ $escrever = function (string $texto) use ($quebra): void {
 };
 
 try {
-    $driver = Config::obter('banco.driver');
+    $banco  = (string) Config::obter('banco.mysql.banco');
+    $testes = (string) Config::obter('banco.mysql.banco_testes', $banco . '_testes');
 
-    $escrever("Instalando o banco de dados ({$driver})...");
+    $escrever('Instalando o banco de dados (MySQL)...');
+    $escrever('Servidor: ' . Config::obter('banco.mysql.host') . ' | Banco: ' . $banco);
 
-    if ($driver === 'sqlite') {
-        $escrever('Arquivo: ' . Config::obter('banco.sqlite.arquivo'));
-    }
-
-    if ($driver === 'mysql') {
-        $escrever('Servidor: ' . Config::obter('banco.mysql.host')
-            . ' | Banco: ' . Config::obter('banco.mysql.banco'));
-
-        Database::criarBancoSeNaoExistir();
-        $escrever('[ok] Banco de dados pronto.');
-    }
-
+    Database::criarBancoSeNaoExistir($banco);
     Database::migrar();
     $escrever('[ok] Banco de dados pronto. Nenhuma tabela padrao foi criada.');
+
+    // O banco dos testes e recriado a cada execucao da suite; aqui so
+    // garantimos que ele exista, para "php testes/executar.php" ja funcionar.
+    Database::criarBancoSeNaoExistir($testes);
+    $escrever("[ok] Banco de testes pronto: {$testes}");
     $escrever('');
     $escrever('Pronto! Agora rode o servidor:');
     $escrever('    php -S localhost:8000 roteador.php');
@@ -60,14 +56,11 @@ try {
 } catch (Throwable $e) {
     $escrever('[ERRO] ' . $e->getMessage());
 
-    // Atencao aos parenteses: sem eles o PHP leria "$driver ?? ('' === 'mysql')".
-    if (($driver ?? '') === 'mysql') {
-        $escrever('');
-        $escrever('Checklist do MySQL:');
-        $escrever('  1. O MySQL esta iniciado no painel do XAMPP?');
-        $escrever('  2. Usuario e senha em configuracoes/banco.php estao corretos?');
-        $escrever('     (no XAMPP o padrao e usuario "root" e senha vazia)');
-    }
+    $escrever('');
+    $escrever('Checklist do MySQL:');
+    $escrever('  1. O MySQL esta iniciado no painel do XAMPP?');
+    $escrever('  2. Usuario e senha em configuracoes/banco.php estao corretos?');
+    $escrever('     (no XAMPP o padrao e usuario "root" e senha vazia)');
 
     if (!$noTerminal) {
         echo '</pre>';

@@ -1,34 +1,29 @@
 <?php
 
 /**
- * Configuracoes do banco de dados.
+ * Configuracoes do banco de dados (MySQL / MariaDB).
  *
- * Vem configurado com MySQL (XAMPP). Para instalar:
+ * Para instalar:
  *   1. Inicie o MySQL no painel de controle do XAMPP
  *   2. Rode:  php instalar.php
  *
- * O instalador cria o banco e executa os esquemas gerados pelo console.
- * O projeto comeca sem tabelas ou dados de exemplo.
+ * O instalador cria os dois bancos e executa o esquema gerado pelo console
+ * (banco/esquema.sql). O projeto comeca sem tabelas ou dados de exemplo.
  *
- * Para voltar ao SQLite (nao precisa de servidor nenhum, o banco e um unico
- * arquivo em banco/dados.sqlite): troque 'driver' para 'sqlite' e rode o
- * instalador de novo.
+ * Sao dois bancos de proposito:
+ *   'banco'        guarda os dados do sistema;
+ *   'banco_testes' e recriado do zero a cada "php testes/executar.php",
+ *                  entao rodar os testes nunca encosta nos seus dados.
  */
 
 return [
-    // 'sqlite' ou 'mysql'
-    'driver' => 'mysql',
-
-    'sqlite' => [
-        'arquivo' => CAMINHO_RAIZ . '/banco/dados.sqlite',
-    ],
-
     'mysql' => [
-        'host'    => 'localhost',
-        'porta'   => 3306,
-        'banco'   => 'framework_aula',
-        'usuario' => 'root',
-        'senha'   => '',
-        'charset' => 'utf8mb4',
+        'host'         => 'localhost',
+        'porta'        => 3306,
+        'banco'        => 'framework_aula',
+        'banco_testes' => 'framework_aula_testes',
+        'usuario'      => 'root',
+        'senha'        => '',
+        'charset'      => 'utf8mb4',
     ],
 ];

@@ -309,12 +309,12 @@ abstract class TesteBase
      * classes de teste tenham criado antes.
      *
      *     $this->recriarTabelas([
-     *         'turmas'   => 'CREATE TABLE turmas (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NULL)',
+     *         'turmas'     => 'CREATE TABLE turmas (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(255) NULL)',
      *         'matriculas' => 'CREATE TABLE matriculas (...)',
      *     ]);
      *
-     * Todos os testes compartilham a mesma conexao em memoria. Sem recriar,
-     * um "CREATE TABLE IF NOT EXISTS" nao faria nada quando outra classe ja
+     * Todas as classes compartilham o mesmo banco de testes. Sem recriar, um
+     * "CREATE TABLE IF NOT EXISTS" nao faria nada quando outra classe ja
      * tivesse criado a tabela com menos colunas, e o resultado passaria a
      * depender da ordem em que os testes rodam.
      *
@@ -324,14 +324,11 @@ abstract class TesteBase
      */
     protected function recriarTabelas(array $tabelas): void
     {
-        $pdo    = Database::conexao();
-        $sqlite = $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite';
+        $pdo = Database::conexao();
 
         // As chaves estrangeiras ficam desligadas so durante a recriacao,
         // senao apagar uma tabela pai esbarraria nas filhas de outros testes.
-        if ($sqlite) {
-            $pdo->exec('PRAGMA foreign_keys = OFF');
-        }
+        $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
 
         try {
             // Outra classe de teste pode ter deixado registros apontando para
@@ -344,9 +341,7 @@ abstract class TesteBase
                 $pdo->exec($definicao);
             }
         } finally {
-            if ($sqlite) {
-                $pdo->exec('PRAGMA foreign_keys = ON');
-            }
+            $pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
         }
     }
 
@@ -358,27 +353,26 @@ abstract class TesteBase
      */
     private function limparDependentes(array $tabelas): void
     {
-        $pdo = Database::conexao();
-
-        if ($pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
+        if ($tabelas === []) {
             return;
         }
 
-        $existentes = $pdo
-            ->query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
-            ->fetchAll(\PDO::FETCH_COLUMN);
+        $pdo = Database::conexao();
 
-        foreach ($existentes as $tabela) {
+        $consulta = $pdo->prepare(
+            'SELECT DISTINCT TABLE_NAME FROM information_schema.KEY_COLUMN_USAGE
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND REFERENCED_TABLE_NAME IN (' . implode(', ', array_fill(0, count($tabelas), '?')) . ')'
+        );
+
+        $consulta->execute(array_values($tabelas));
+
+        foreach ($consulta->fetchAll(\PDO::FETCH_COLUMN) as $tabela) {
             if (in_array($tabela, $tabelas, true)) {
                 continue;
             }
 
-            foreach ($pdo->query("PRAGMA foreign_key_list({$tabela})") as $chave) {
-                if (in_array($chave['table'], $tabelas, true)) {
-                    $pdo->exec("DELETE FROM {$tabela}");
-                    break;
-                }
-            }
+            $pdo->exec('DELETE FROM ' . Sql::identificador($tabela, 'tabela'));
         }
     }
 
@@ -395,17 +389,8 @@ abstract class TesteBase
         $pdo = Database::conexao();
         $pdo->exec("DELETE FROM {$tabela}");
 
-        // Zera o contador do AUTOINCREMENT no SQLite (se a tabela de
-        // controle existir) para os ids comecarem sempre em 1.
-        if ($pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite') {
-            $existe = $pdo->query(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'"
-            )->fetchColumn();
-
-            if ($existe !== false) {
-                $pdo->exec("DELETE FROM sqlite_sequence WHERE name='{$tabela}'");
-            }
-        }
+        // Zera o contador do AUTO_INCREMENT para os ids comecarem sempre em 1.
+        $pdo->exec("ALTER TABLE {$tabela} AUTO_INCREMENT = 1");
     }
 
     /**

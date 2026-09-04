@@ -1883,7 +1883,18 @@ function acrescentarColunasAoEsquema(string $tabela, array $colunas, bool $mysql
 
         $definicao = "{$coluna} " . tipoSql('string', $mysql) . ' NULL';
 
-        // Entra logo antes do parentese que fecha a definicao da tabela.
+        // Uma coluna nova nunca pode cair depois de um CONSTRAINT: e assim
+        // que se le um CREATE TABLE, e era exatamente isso que quebrava ao
+        // dar login a um model com belongs_to ("auth:install Aluno" com a
+        // chave turma_id).
+        if (preg_match('/\bCONSTRAINT\b/i', $novo, $achado, PREG_OFFSET_CAPTURE)) {
+            $posicao = (int) $achado[0][1];
+            $novo    = substr($novo, 0, $posicao) . $definicao . ",\n    " . substr($novo, $posicao);
+
+            continue;
+        }
+
+        // Sem restricoes, entra logo antes do parentese que fecha a tabela.
         $novo = (string) preg_replace(
             '/,?\s*\)(\s*(?:ENGINE\s*=\s*[^;]+)?;)$/is',
             ",\n    {$definicao}\n)\$1",

@@ -113,17 +113,19 @@ php console.php scaffold:pesquisa produtos --remover
 php console.php auth:install [Modelo|tabela] [Prefixo]
 ```
 
-Sem argumentos, cria o model `Usuario` com a tabela `usuarios`. Para aplicar a
-autenticacao a um model que ja existe:
+Sem argumentos, cria o model `Usuario` (tabela `usuarios`) e o login unico do
+projeto em `/auth`. Para aplicar a autenticacao a um model que ja existe,
+informe o nome dele — **o prefixo das rotas sai do proprio modelo**:
 
 ```bash
 php console.php scaffold:crud clientes nome:string
-php console.php auth:install Cliente
+php console.php auth:install Cliente          # rotas em /auth-cliente
+php console.php auth:install Cliente auth     # ou no login unico, em /auth
 ```
 
 O comando adiciona `email` e `senha` (com indice unico no e-mail), aplica o
 trait `Nucleo\Autenticavel` ao model e gera as telas, as rotas
-`/auth/login`, `/auth/registrar`, `/auth/sair` e um teste de integracao.
+`registrar`, `login` e `sair` do provider e um teste de integracao.
 
 As senhas nunca vao para o banco em texto puro: o trait aplica
 `password_hash()` em `criar()`, `atualizar()` e `criarComSenha()`, e o login
@@ -134,13 +136,17 @@ sem informar credenciais.
 
 ```bash
 php console.php scaffold:crud professores nome:string
-php console.php auth:install Professor professor
+php console.php auth:install Professor
 php console.php scaffold:crud aulas titulo:string --auth=professor
 ```
 
 Cada provider tem controller, telas, rotas (`/auth-professor/...`) e chaves de
 sessao proprias. Nos controllers use `$this->exigirAutenticacao('professor')`;
 nas views, `autenticado('professor')` e `usuario_id('professor')`.
+
+`exigirAutenticacao()` e uma chamada de metodo, nao uma configuracao global:
+vale so na acao onde estiver escrita. Para proteger o controller inteiro,
+chame-a no construtor.
 
 ### Relatorio em PDF
 

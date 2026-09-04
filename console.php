@@ -74,6 +74,11 @@ function ajuda(string $comando): void
     Relacao 1:N (a tabela pai precisa existir antes):
       php console.php scaffold:crud matriculas nome:string turma_id:belongs_to=turmas
 
+    Telas de login (o prefixo sai do proprio modelo):
+      php console.php auth:install                cria o model Usuario e o login unico em /auth
+      php console.php auth:install Professor      usa o model Professor no login /auth-professor
+      php console.php auth:install Cliente auth   usa o model Cliente no login unico em /auth
+
     Opcoes do scaffold:crud:
       --auth[=prefixo]   exige login em todas as rotas do recurso
       --modelo=Nome      define o nome da classe do model
@@ -88,8 +93,8 @@ function ajuda(string $comando): void
     Exemplos:
       php console.php scaffold:crud produtos nome:string preco:decimal --auth
       php console.php scaffold:pesquisa produtos nome preco
-      php console.php auth:install Cliente
-      php console.php auth:install Professor professor
+      php console.php auth:install Professor
+      php console.php scaffold:crud aulas titulo:string --auth=professor
 
     TXT;
 
@@ -135,12 +140,8 @@ function gerarCrud(array $argumentos): void
 
     // Sem essa checagem o CRUD nasceria redirecionando para uma tela de
     // login que nao existe, e os testes gerados falhariam de cara.
-    if ($provider !== false && !Nucleo\Autenticacao::instalado($provider)) {
-        throw new RuntimeException(
-            'A tela de login ' . ($provider === '' ? '/auth' : '/auth-' . str_replace('_', '-', $provider))
-            . " ainda nao existe.\nInstale-a antes:\n  php console.php auth:install"
-            . ($provider === '' ? '' : " <Modelo> {$provider}")
-        );
+    if ($provider !== false) {
+        $provider = resolverProviderDoCrud($provider);
     }
 
     // -------------------------------------------------------------
@@ -330,9 +331,45 @@ function interpretarOpcaoAuth(array $opcoes): string|false
         return '';
     }
 
-    $prefixo = normalizarPrefixoAutenticacao((string) $valor);
+    // "auth" ja volta como provider padrao de normalizarPrefixoAutenticacao().
+    return normalizarPrefixoAutenticacao((string) $valor);
+}
 
-    return $prefixo === 'auth' ? '' : $prefixo;
+/**
+ * Confere se a tela de login pedida por --auth existe.
+ *
+ * "--auth" sozinho se ajusta ao unico login instalado, do mesmo jeito que
+ * exigirAutenticacao() sem argumento: um projeto que so rodou
+ * "auth:install Professor" nao precisa escrever --auth=professor.
+ */
+function resolverProviderDoCrud(string $provider): string
+{
+    if (Nucleo\Autenticacao::instalado($provider)) {
+        return $provider;
+    }
+
+    $instalados = Nucleo\Autenticacao::providers();
+
+    if ($provider === Nucleo\Autenticacao::PADRAO && count($instalados) === 1) {
+        return $instalados[0];
+    }
+
+    $rota     = fn (string $p): string => '/' . Nucleo\Autenticacao::rotaBase($p);
+    $sugestao = '  php console.php auth:install'
+        . ($provider === Nucleo\Autenticacao::PADRAO ? '' : ' ' . pascal($provider));
+
+    if ($instalados === []) {
+        throw new RuntimeException(
+            'A tela de login ' . $rota($provider) . " ainda nao existe.\n"
+            . "Instale-a antes:\n" . $sugestao
+        );
+    }
+
+    throw new RuntimeException(
+        'A tela de login ' . $rota($provider) . " nao existe.\n"
+        . 'Telas instaladas: ' . implode(', ', array_map($rota, $instalados)) . ".\n"
+        . "Use --auth=<prefixo> com uma delas ou instale a nova:\n" . $sugestao
+    );
 }
 
 // =====================================================================
@@ -1639,8 +1676,11 @@ function gerarAutenticacao(array $argumentos): void
         );
     }
 
-    $modelo   = resolverModeloAutenticacao($posicionais[0] ?? null);
-    $provider = normalizarPrefixoAutenticacao($posicionais[1] ?? null);
+    $modelo    = resolverModeloAutenticacao($posicionais[0] ?? null);
+    $escolhido = array_key_exists(1, $posicionais);
+    $provider  = $escolhido
+        ? normalizarPrefixoAutenticacao($posicionais[1])
+        : prefixoDoModelo($posicionais[0] ?? null, $modelo['classe']);
 
     $rota         = Nucleo\Autenticacao::rotaBase($provider);
     $vista        = Nucleo\Autenticacao::pastaViews($provider);
@@ -1761,7 +1801,7 @@ function gerarAutenticacao(array $argumentos): void
     echo "Autenticacao aplicada ao modelo {$modelo['classe']}.\n";
 
     foreach (array_keys($arquivos) as $caminho) {
-        echo '  ' . ($modelo['novo'] && $caminho === $modelo['arquivo'] ? '+' : '+') . ' ' . caminhoRelativo($caminho) . "\n";
+        echo '  + ' . caminhoRelativo($caminho) . "\n";
     }
 
     if (!$modelo['novo']) {
@@ -1769,13 +1809,48 @@ function gerarAutenticacao(array $argumentos): void
     }
 
     echo '  ~ banco/esquema.sqlite.sql, banco/esquema.mysql.sql' . "\n\n";
+
+    if ($provider === Nucleo\Autenticacao::PADRAO) {
+        echo "Login em /{$rota}: e o login unico do projeto.\n\n";
+    } else {
+        echo "Login em /{$rota}: prefixo \"{$provider}\""
+            . ($escolhido ? ".\n" : ", vindo do modelo {$modelo['classe']}.\n")
+            . "Para deixa-lo no login unico /auth: php console.php auth:install {$modelo['classe']} auth\n\n";
+    }
+
     echo "Rotas:\n";
     echo "  /{$rota}/registrar   cria uma conta\n";
     echo "  /{$rota}/login       entra\n";
     echo "  /{$rota}/sair        encerra a sessao\n\n";
-    echo 'Para exigir login em um CRUD: php console.php scaffold:crud <tabela> ... --auth'
-        . ($provider === '' ? '' : "={$provider}") . "\n";
+    echo "Para exigir esse login:\n";
+    echo '  em um CRUD novo    php console.php scaffold:crud <tabela> <campo:tipo> ... --auth'
+        . ($provider === Nucleo\Autenticacao::PADRAO ? '' : "={$provider}") . "\n";
+    echo '  em um controller   $this->exigirAutenticacao('
+        . ($provider === Nucleo\Autenticacao::PADRAO ? '' : "'{$provider}'") . ");\n\n";
     echo "Rode os testes com: php testes/executar.php {$controlador}\n";
+}
+
+/**
+ * Prefixo do provider quando o comando recebeu so o modelo.
+ *
+ *     auth:install               -> /auth             (login unico do projeto)
+ *     auth:install Usuario       -> /auth             (o model padrao do framework)
+ *     auth:install Professor     -> /auth-professor
+ *     auth:install professores   -> /auth-professor   (o nome da tabela tambem serve)
+ *
+ * O prefixo nasce do proprio modelo porque digitar "auth:install Professor
+ * professor" repetia a mesma informacao duas vezes. Para escolher outro nome,
+ * informe o segundo argumento; "auth" nele devolve o login unico em /auth.
+ */
+function prefixoDoModelo(?string $alvo, string $classe): string
+{
+    if ($alvo === null || $classe === 'Usuario') {
+        return Nucleo\Autenticacao::PADRAO;
+    }
+
+    return normalizarPrefixoAutenticacao(
+        strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $classe))
+    );
 }
 
 function normalizarPrefixoAutenticacao(?string $prefixo): string

@@ -82,14 +82,30 @@ nenhum arquivo fica pela metade e o esquema volta ao estado anterior.
 
 | Opcao | Efeito |
 |---|---|
-| `--auth` | exige login em todas as acoes do controller, usando o provider padrao (`/auth`) |
-| `--auth=prefixo` | idem, usando o provider nomeado (`/auth-prefixo`) |
+| `--auth` | exige login em todas as acoes do controller: usa o provider padrao (`/auth`) ou, quando so existe uma tela de login instalada, essa tela |
+| `--auth=prefixo` | idem, escolhendo o provider (`/auth-prefixo`) |
 | `--modelo=Nome` | define a classe do model em vez de derivar do plural |
 | `--sem-menu` | nao acrescenta o recurso a `configuracoes/menu.php` |
 | `-v` | mostra os detalhes tecnicos quando o comando falha |
 
 `--auth` exige que a tela de login ja exista. Rode `auth:install` antes; caso
-contrario o comando para e mostra qual comando falta.
+contrario o comando para e mostra qual comando falta:
+
+```text
+[ERRO] A tela de login /auth ainda nao existe.
+Instale-a antes:
+  php console.php auth:install
+```
+
+Com **duas ou mais** telas instaladas, `--auth` sozinho nao adivinha qual
+usar e o comando lista as opcoes:
+
+```text
+[ERRO] A tela de login /auth nao existe.
+Telas instaladas: /auth-aluno, /auth-professor.
+Use --auth=<prefixo> com uma delas ou instale a nova:
+  php console.php auth:install
+```
 
 **Sem `--auth`, todas as rotas ficam publicas**, inclusive `excluir` e
 `relatorio`. O comando avisa isso no fim da execucao. Para proteger apenas
@@ -346,15 +362,31 @@ vez de apontar para o arquivo.
 php console.php auth:install [Modelo|tabela] [Prefixo]
 ```
 
-Para aplicar autenticacao a um model ja criado:
+Cada tela de login instalada e um **provider**, com controller, views, rotas
+e chaves de sessao proprias.
+
+Sem argumentos, o comando cria o model `Usuario` (tabela `usuarios`) e o
+login unico do projeto em `/auth`. Para dar login a um model que ja existe,
+informe o nome dele — **o prefixo das rotas sai do proprio modelo**, sem
+precisar repetir:
 
 ```bash
 php console.php scaffold:crud clientes nome:string
-php console.php auth:install Cliente
+php console.php auth:install Cliente        # rotas em /auth-cliente
 ```
 
-Tambem e aceito o nome da tabela (`auth:install clientes`). Sem argumentos, o
-comando cria o model `Usuario` com a tabela `usuarios`.
+| Comando | Model usado | Rotas |
+|---|---|---|
+| `auth:install` | cria `Usuario` | `/auth/login` |
+| `auth:install Cliente` | `Cliente` | `/auth-cliente/login` |
+| `auth:install clientes` | idem: o nome da tabela tambem serve | `/auth-cliente/login` |
+| `auth:install Usuario` | `Usuario` | `/auth/login` |
+| `auth:install Cliente equipe` | `Cliente` | `/auth-equipe/login` |
+| `auth:install Cliente auth` | `Cliente` | `/auth/login` |
+
+O segundo argumento so serve para escolher outro prefixo; `auth` nele devolve
+o login unico em `/auth`. Um model em PascalCase vira snake_case no prefixo
+(`ProfessorSubstituto` -> `/auth-professor-substituto`).
 
 O comando:
 
@@ -365,23 +397,26 @@ O comando:
   arquivo, e inclui os campos em `$preenchiveis`;
 - gera o controller, as telas de login/cadastro e um teste de integracao.
 
-Gera ou atualiza:
+Gera ou atualiza (exemplo de `auth:install Cliente`):
 
 ```text
-modelos/Cliente.php                          (atualizado)
-controllers/AuthController.php
-views/auth/login.php
-views/auth/registrar.php
-testes/controllers/AuthControllerTest.php
 banco/esquema.sqlite.sql, banco/esquema.mysql.sql
+modelos/Cliente.php                              (atualizado)
+controllers/AuthClienteController.php
+views/auth/cliente/login.php
+views/auth/cliente/registrar.php
+testes/controllers/AuthClienteControllerTest.php
 ```
 
 Rotas criadas:
 
 ```text
-/auth/registrar    cria uma conta
-/auth/login        mostra e processa o login
-/auth/sair         encerra a sessao
+/auth-cliente/registrar    cria uma conta
+/auth-cliente/login        mostra e processa o login
+/auth-cliente/sair         encerra a sessao
+
+Sem prefixo nenhum (`auth:install`), os mesmos arquivos ficam em
+`controllers/AuthController.php`, `views/auth/` e as rotas em `/auth/...`.
 ```
 
 ### 6.1 Como a senha e tratada
@@ -415,7 +450,7 @@ Cada provider recebe controller, telas, rotas e chaves de sessao proprios:
 
 ```bash
 php console.php scaffold:crud professores nome:string
-php console.php auth:install Professor professor
+php console.php auth:install Professor
 php console.php scaffold:crud aulas titulo:string --auth=professor
 ```
 
@@ -429,10 +464,33 @@ $this->exigirAutenticacao('professor');
 ```
 
 `autenticado('professor')` e `usuario_id('professor')` consultam a mesma
-sessao. Sem argumento, `exigirAutenticacao()` usa o provider padrao (`/auth`);
-se ele nao existir e houver apenas um provider instalado, usa esse. Se nenhuma
-tela de login existir, o erro diz qual comando rodar em vez de redirecionar
-para uma pagina inexistente.
+sessao. As chaves sao separadas por provider (`autenticacao_professor_id`),
+entao entrar em um login nao da acesso as telas do outro.
+
+Sem argumento, `exigirAutenticacao()` usa o provider padrao (`/auth`); se ele
+nao existir e houver apenas um provider instalado, usa esse — a mesma regra do
+`--auth`. Se nenhuma tela de login existir, o erro diz qual comando rodar em
+vez de redirecionar para uma pagina inexistente.
+
+`exigirAutenticacao()` e uma chamada de metodo comum, nao uma configuracao
+global: ela vale so na acao onde estiver escrita. Para cobrir o controller
+inteiro, chame-a no construtor:
+
+```php
+public function __construct()
+{
+    $this->exigirAutenticacao('professor');
+
+    $this->modelo = new Aula();
+}
+```
+
+Isso nao afeta a tela de login, que e atendida por outro controller
+(`AuthProfessorController`).
+
+Depois de um login bem-sucedido, o controller gerado redireciona para a
+pagina inicial (`$this->redirecionar();`). Se a `/` exigir outro provider,
+troque o destino para uma rota que o provider recem-conectado possa abrir.
 
 ## 7. Protecao dos formularios (CSRF)
 

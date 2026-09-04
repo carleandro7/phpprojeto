@@ -27,8 +27,10 @@ completo pelo terminal:</p>
 <pre class="codigo">php console.php auth:install Cliente</pre>
 
 <p>O comando adiciona os campos <code>email</code> e <code>senha</code> quando
-necessario. Controllers podem exigir login chamando
-<code>$this-&gt;exigirAutenticacao()</code>. Consulte
+necessario e cria as telas em <code>/auth-cliente</code> — o prefixo sai do
+nome do modelo. Sem argumento nenhum, <code>auth:install</code> cria o model
+<code>Usuario</code> e o login unico em <code>/auth</code>. Controllers podem
+exigir login chamando <code>$this-&gt;exigirAutenticacao()</code>. Consulte
 <code>documentacao/Tutorial-Comandos.md</code> para o fluxo completo.</p>
 
 <p><a class="botao botao--secundario" href="<?= url() ?>">Voltar ao inicio</a></p>

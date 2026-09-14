@@ -193,8 +193,10 @@ final class RelatorioPdf
             $texto = substr($texto, 0, max(1, $limite - 3)) . '...';
         }
 
-        return "BT\n/F1 " . self::numero($tamanhoFonte) . ' Tf\n1 0 0 1 '
-            . self::numero($x) . ' ' . self::numero($y) . ' Tm\n('
+        // "rg" pinta o fundo das celulas e tambem o texto: sem voltar para o
+        // preto, o texto sairia na cor da faixa (quase branco) e sumiria.
+        return "BT\n0 0 0 rg\n/F1 " . self::numero($tamanhoFonte) . " Tf\n1 0 0 1 "
+            . self::numero($x) . ' ' . self::numero($y) . " Tm\n("
             . self::textoPdf($texto) . ") Tj\nET\n";
     }
 

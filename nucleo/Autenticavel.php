@@ -181,7 +181,7 @@ trait Autenticavel
     private function exigirEmail(mixed $email): void
     {
         if (!is_scalar($email) || trim((string) $email) === '') {
-            throw new InvalidArgumentException('O campo email e obrigatorio para criar uma conta.');
+            throw new InvalidArgumentException('O campo email é obrigatório para criar uma conta.');
         }
 
         if (!filter_var(trim((string) $email), FILTER_VALIDATE_EMAIL)) {
@@ -192,7 +192,7 @@ trait Autenticavel
     private function exigirSenha(mixed $senha): void
     {
         if (!is_scalar($senha) || trim((string) $senha) === '') {
-            throw new InvalidArgumentException('O campo senha e obrigatorio para criar uma conta.');
+            throw new InvalidArgumentException('O campo senha é obrigatório para criar uma conta.');
         }
 
         if (mb_strlen((string) $senha) < Autenticacao::SENHA_MINIMA) {

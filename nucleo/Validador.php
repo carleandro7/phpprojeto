@@ -35,7 +35,7 @@ class Validador
         $valor = $this->valor($campo);
 
         if ($valor === null || trim((string) $valor) === '') {
-            $this->erro($campo, 'O campo ' . $this->rotulo($campo, $rotulo) . ' e obrigatorio.');
+            $this->erro($campo, 'O campo ' . $this->rotulo($campo, $rotulo) . ' é obrigatório.');
         }
 
         return $this;

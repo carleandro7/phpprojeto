@@ -11,20 +11,62 @@ Voce vai construir um sistema pequeno para a biblioteca da escola:
 - o sistema recusa livro sem ano ou com ano no futuro — uma regra que **voce**
   escreve.
 
-Todo passo segue o mesmo formato:
-
-| Marca | O que significa |
-|---|---|
-| **Faca** | o que digitar ou editar |
-| **Confira** | o que deve aparecer na tela ou no terminal |
-| **Entenda** | por que funciona assim |
-
-Nao pule o **Entenda**. Copiar comando qualquer um copia; o que voce vai
-levar desta aula esta ali.
-
 > Esta e a versao curta. A *Atividade de laboratorio — Biblioteca da escola*
 > (`Atividade-Laboratorio-Biblioteca.md`) vai bem alem: categorias, mais regras
 > de negocio, testes escritos do zero e Git. Faca esta primeiro.
+
+---
+
+## Como ler esta atividade
+
+Cada acao comeca com uma **etiqueta** que diz **onde** voce faz aquilo:
+
+| Etiqueta | Onde voce faz | O que vem embaixo |
+|---|---|---|
+| **TERMINAL 1** | no terminal de **comandos** | um comando para digitar e apertar Enter |
+| **TERMINAL 2** | no terminal que so roda o **servidor** | o comando do servidor (so na parte 1) |
+| **CODIGO** | no **editor** (VS Code), dentro do arquivo indicado | codigo PHP para escrever no arquivo |
+| **NAVEGADOR** | no Chrome ou Firefox | um endereco para abrir e o que clicar |
+
+E duas marcas que nao pedem acao:
+
+| Marca | O que significa |
+|---|---|
+| **Confira** | o que deve aparecer. Se aparecer outra coisa, **pare** e veja o [Socorro rapido](#socorro-rapido) |
+| **Entenda** | por que funciona assim. Nao pule: o aprendizado esta aqui |
+
+Quatro regras para nao se confundir:
+
+1. **Comando vai no terminal. Codigo vai no arquivo.** Nunca cole codigo PHP no
+   terminal, nem comando dentro de um arquivo.
+2. **Um comando por vez.** Digite (ou cole) a linha e aperte Enter. Espere
+   terminar antes do proximo.
+3. **Nao digite a saida.** Os blocos depois de **Confira** mostram o que o
+   terminal **responde**.
+4. **Nos blocos de mudanca** (os que tem `+` e `-` no comeco das linhas):
+   - linha com `+` e linha que **entra** no arquivo;
+   - linha com `-` e linha que **sai** do arquivo;
+   - linha sem sinal ja existe: ela esta ali so para mostrar **onde** mexer;
+   - **nao digite** o `+` nem o `-`.
+
+Exemplo de bloco de mudanca:
+
+```diff
+     public function __construct()
+     {
++        $this->exigirAutenticacao('bibliotecario');
++
+         $this->modelo = new Bibliotecario();
+     }
+```
+
+Leia assim: "dentro do `__construct()`, logo acima de
+`$this->modelo = new Bibliotecario();`, acrescente a linha
+`$this->exigirAutenticacao('bibliotecario');` e uma linha em branco".
+
+Todos os comandos estao reunidos no [Apendice A](#apendice-a--todos-os-comandos-do-terminal)
+e todo o codigo, arquivo por arquivo, no
+[Apendice B](#apendice-b--todo-o-codigo-que-voce-escreve).
 
 ---
 
@@ -51,7 +93,7 @@ bibliotecarios                      livros
 ```
 
 As tabelas nao se ligam uma a outra. E de proposito: hoje o assunto e
-**login e administrador**.
+**login, administrador e uma regra de negocio**.
 
 ## Roteiro
 
@@ -60,7 +102,7 @@ As tabelas nao se ligam uma a outra. E de proposito: hoje o assunto e
 | 1 | Projeto copiado, banco criado, servidor no ar | 15 min |
 | 2 | Tabela dos bibliotecarios | 10 min |
 | 3 | Tela de login do bibliotecario | 10 min |
-| 4 | O administrador cadastrado no banco | 20 min |
+| 4 | O primeiro bibliotecario (o administrador) cadastrado no banco | 20 min |
 | 5 | Portas trancadas: so o bibliotecario entra | 20 min |
 | 6 | Cadastro de livros com pesquisa | 20 min |
 | 7 | Uma regra de negocio: o ano do livro | 15 min |
@@ -71,51 +113,71 @@ As tabelas nao se ligam uma a outra. E de proposito: hoje o assunto e
 
 ## Parte 1 — Preparar o projeto (15 min)
 
-### 1.1 Confira o ambiente
+### 1.1 Ligue o XAMPP
 
-**Faca:**
+Abra o painel do XAMPP e clique em **Start** no **MySQL** e no **Apache**.
+
+**Entenda:** o MySQL guarda os dados. O Apache so e necessario para abrir o
+phpMyAdmin — o sistema em si roda no servidor do proprio PHP.
+
+### 1.2 Faca uma copia do framework
+
+Copie a pasta do framework e de o nome **`minha-biblioteca`** a copia. O jeito
+mais facil e pelo explorador de arquivos: copiar, colar e renomear.
+
+> No Mac ou Linux, se preferir o terminal, o mesmo resultado sai com
+> `cp -R framework minha-biblioteca`, rodado na pasta onde esta o framework.
+
+**Entenda:** trabalhando numa copia, o framework original fica limpo para as
+proximas atividades.
+
+### 1.3 Abra o projeto e os dois terminais
+
+1. No VS Code: **Arquivo > Abrir pasta...** e escolha **`minha-biblioteca`**.
+2. Abra um terminal: **Terminal > Novo terminal**. Este e o **TERMINAL 1**.
+3. Abra um segundo: clique no **+** do painel do terminal. Este e o
+   **TERMINAL 2**.
+
+Como a pasta aberta e a `minha-biblioteca`, os dois terminais ja comecam
+dentro dela.
+
+**TERMINAL 1**
 
 ```bash
 php -v
 ```
 
-**Confira:** a versao precisa ser **8.1 ou maior**.
+**Confira:** aparece `PHP 8.1` ou maior (`8.2`, `8.3`...).
 
-Abra o painel do XAMPP e inicie o **MySQL** e o **Apache**.
+Apareceu "php nao e reconhecido"? Veja o [Socorro rapido](#socorro-rapido).
 
-**Entenda:** o MySQL guarda os dados. O Apache so e necessario para abrir o
-phpMyAdmin na parte 4 — o sistema em si roda no servidor do proprio PHP.
+**Entenda os dois terminais:**
 
-### 1.2 Faca uma copia do framework
+| Terminal | Para que | Durante a aula |
+|---|---|---|
+| TERMINAL 1 | todos os comandos (`php console.php ...`, `php testes/...`) | voce usa o tempo todo |
+| TERMINAL 2 | so o servidor (`php -S ...`) | fica rodando; nao digite mais nada nele |
 
-**Faca:** copie a pasta do framework e de o nome `minha-biblioteca`. Pode ser
-pelo explorador de arquivos ou pelo terminal:
+### 1.4 Crie um banco so para esta atividade
 
-```bash
-cd ~/Desenvolvimento          # ou a pasta onde voce guarda seus projetos
-cp -R framework minha-biblioteca
-cd minha-biblioteca
+**CODIGO** · `configuracoes/banco.php` · troque os dois nomes de banco
+
+```diff
+-        'banco'        => 'framework_aula',
+-        'banco_testes' => 'framework_aula_testes',
++        'banco'        => 'minha_biblioteca',
++        'banco_testes' => 'minha_biblioteca_testes',
 ```
 
-**Entenda:** trabalhando numa copia, o framework original fica limpo para as
-proximas atividades.
+Salve o arquivo (**Ctrl+S**).
 
-### 1.3 Crie um banco so para esta atividade
-
-**Faca:** abra `configuracoes/banco.php` e troque os dois nomes de banco:
-
-```php
-'banco'        => 'minha_biblioteca',
-'banco_testes' => 'minha_biblioteca_testes',
-```
-
-Depois, no terminal:
+**TERMINAL 1**
 
 ```bash
 php instalar.php
 ```
 
-**Confira:**
+**Confira:** as primeiras linhas da resposta sao estas:
 
 ```text
 Instalando o banco de dados (MySQL)...
@@ -132,19 +194,21 @@ usuario `root` e senha vazia).
 `minha_biblioteca_testes` e apagado e recriado toda vez que os testes rodam —
 assim testar nunca apaga o que voce cadastrou.
 
-### 1.4 Suba o servidor
+### 1.5 Suba o servidor
 
-**Faca:** abra um **segundo terminal** na pasta `minha-biblioteca` e rode:
+**TERMINAL 2**
 
 ```bash
 php -S localhost:8000 roteador.php
 ```
 
-Deixe esse terminal aberto ate o fim da aula. Os comandos das proximas partes
-vao no **primeiro** terminal.
+**Confira:** o terminal mostra `Development Server (http://localhost:8000)
+started` e **fica parado assim**. Esta certo: ele esta esperando o navegador.
+Deixe-o rodando ate o fim da aula.
 
-**Confira:** abra <http://localhost:8000>. A pagina inicial do framework
-aparece.
+**NAVEGADOR** · <http://localhost:8000>
+
+**Confira:** a pagina inicial do framework aparece.
 
 ---
 
@@ -156,11 +220,11 @@ Para alguem fazer login, o sistema precisa de um lugar onde guardar **quem
 pode entrar**. Esse lugar e a tabela `bibliotecarios`.
 
 A ordem e: primeiro a tabela existe (parte 2), depois ela ganha a capacidade
-de fazer login (parte 3).
+de fazer login (parte 3), depois recebe o primeiro bibliotecario (parte 4).
 
 ### 2.2 Gere o cadastro
 
-**Faca:**
+**TERMINAL 1**
 
 ```bash
 php console.php scaffold:crud bibliotecarios nome:string
@@ -190,12 +254,14 @@ Rode os testes com: php testes/executar.php Bibliotecario
 
 | Pedaco | Significado |
 |---|---|
+| `php console.php` | "PHP, rode o console do framework" |
 | `scaffold:crud` | "gere um cadastro completo": criar, listar, ver, editar e excluir |
 | `bibliotecarios` | o nome da tabela, no plural |
 | `nome:string` | uma coluna chamada `nome`, do tipo texto curto |
 
 **Entenda o que foi gerado.** `+` e arquivo criado; `~` e arquivo alterado.
-Cada arquivo tem um papel no MVC:
+Voce ainda nao escreveu nenhuma linha: tudo isso veio do comando. Cada arquivo
+tem um papel no MVC:
 
 | Arquivo | Camada | Papel |
 |---|---|---|
@@ -213,8 +279,9 @@ abrir `/bibliotecarios` e excluir alguem.
 Por enquanto nao da para resolver: ainda nao existe login. Guarde esse aviso —
 voce resolve na parte 5.
 
-**Confira:** abra <http://localhost:8000/bibliotecarios>. A lista aparece
-vazia.
+**NAVEGADOR** · <http://localhost:8000/bibliotecarios>
+
+**Confira:** a lista aparece vazia.
 
 > **Nao cadastre ninguem por essa tela.** O formulario dela so tem o campo
 > `nome`: um bibliotecario criado ali fica sem e-mail e sem senha, e nunca
@@ -226,7 +293,7 @@ vazia.
 
 ### 3.1 Instale o login na tabela
 
-**Faca:**
+**TERMINAL 1**
 
 ```bash
 php console.php auth:install Bibliotecario
@@ -258,8 +325,8 @@ Para exigir esse login:
 Rode os testes com: php testes/executar.php AuthBibliotecarioController
 ```
 
-Guarde as duas ultimas linhas de "Para exigir esse login": voce vai usar as
-duas.
+As linhas de "Para exigir esse login" sao **dicas** do console. **Nao rode
+nada delas agora**: voce vai usar as duas nas partes 5 e 6.
 
 ### 3.2 Entenda o que mudou
 
@@ -269,11 +336,11 @@ duas.
 |---|---|
 | `id` | numero do registro, criado sozinho |
 | `nome` | o nome da pessoa (parte 2) |
-| `email` | **novo** — o que se digita para entrar. Tem indice `UNIQUE`: nao existem dois bibliotecarios com o mesmo e-mail |
-| `senha` | **novo** — guarda a senha, sempre como hash (parte 4) |
+| `email` | **nova** — o que se digita para entrar. Tem indice `UNIQUE`: nao existem dois bibliotecarios com o mesmo e-mail |
+| `senha` | **nova** — guarda a senha, sempre como hash (parte 4) |
 
 **No model**, `modelos/Bibliotecario.php` ganhou uma linha e duas colunas
-permitidas:
+permitidas (o console fez isso, voce nao precisa digitar):
 
 ```php
 class Bibliotecario extends Model
@@ -292,36 +359,33 @@ ter, sem voce escrever. Os que importam hoje:
 | Metodo | O que faz |
 |---|---|
 | `autenticar($email, $senha)` | confere e-mail e senha; devolve o bibliotecario ou `null` |
+| `buscarPorEmail($email)` | procura um bibliotecario pelo e-mail |
 | `criarComSenha($dados, $senha)` | cria um bibliotecario ja com a senha em hash |
-| `trocarSenha($id, $senha)` | troca a senha de quem ja existe |
 
 **Nas rotas**, o prefixo `auth-bibliotecario` saiu do nome do model. Por isso
 o menu mostra "Entrar (bibliotecario)".
 
 ### 3.3 Olhe a tela
 
-**Faca:** abra <http://localhost:8000/auth-bibliotecario/login> e tente
-entrar com qualquer e-mail e senha.
+**NAVEGADOR** · <http://localhost:8000/auth-bibliotecario/login>
+
+Tente entrar com qualquer e-mail e senha.
 
 **Confira:**
 
 - a tela **nao tem o menu lateral** — quem ainda nao entrou nao precisa ver
   a lista de telas do sistema;
-- aparece "E-mail ou senha invalidos." — claro: a tabela ainda esta vazia.
+- aparece "E-mail ou senha invalidos." — claro: a tabela ainda esta vazia,
+  **ninguem** consegue entrar. A parte 4 resolve isso.
 
 ---
 
-## Parte 4 — O administrador cadastrado no banco (20 min)
+## Parte 4 — O primeiro bibliotecario: o administrador (20 min)
 
-O sistema precisa de um primeiro bibliotecario. Mas repare no link "Criar uma
-conta" na tela de login: se ele ficar aberto, **qualquer aluno cria uma conta
-e vira administrador da biblioteca**.
+O login existe, mas a tabela `bibliotecarios` esta vazia. Precisamos cadastrar
+o **primeiro** bibliotecario: a **Maria**, que sera a administradora.
 
-Por isso o primeiro bibliotecario — o administrador — **nao** vai ser criado
-por tela nenhuma. Ele vai ser inserido direto no banco, por quem instala o
-sistema: voce.
-
-Os dados do administrador:
+Os dados dela:
 
 | Campo | Valor |
 |---|---|
@@ -332,118 +396,184 @@ Os dados do administrador:
 > Na aula, use exatamente esses dados. Num sistema de verdade a senha seria
 > outra, e so o administrador saberia.
 
-### 4.1 Por que nao da para gravar a senha direto
+### 4.1 Por que nao pela tela "Criar uma conta"?
 
-A tentacao e escrever `'biblioteca123'` no banco e pronto. **Nao funciona** —
-e ainda bem.
+A tela de login tem um link "Criar uma conta". Ela funcionaria para a Maria —
+mas funcionaria **para qualquer um**: um aluno qualquer criaria uma conta e
+viraria administrador da biblioteca.
 
-Abra `nucleo/Autenticavel.php` e procure o metodo `autenticar()`. A ultima
-linha e esta:
+Por isso, na parte 5, essa tela vai ser **trancada**: so quem ja esta logado
+podera usa-la. E ai surge o problema do ovo e da galinha: se so quem esta
+logado cadastra bibliotecarios, **quem cadastra o primeiro?**
 
-```php
-return password_verify($senha, (string) $registro['senha']) ? $registro : null;
+Resposta: **voce**, por fora do site. Voce vai escrever um arquivo PHP pequeno
+que grava a Maria direto no banco, e roda-lo uma vez pelo terminal.
+
+O caminho inteiro tem tres passos:
+
+```text
+PASSO 1   CODIGO       crie o arquivo  banco/criar-administrador.php
+PASSO 2   TERMINAL 1   rode:           php banco/criar-administrador.php
+PASSO 3   NAVEGADOR    veja a Maria no phpMyAdmin e entre no sistema
 ```
 
-O login **nunca compara** a senha digitada com um texto guardado. Ele usa
-`password_verify()`, que espera encontrar no banco um **hash**.
+### 4.2 Passo 1 — Crie o arquivo
+
+**CODIGO** · arquivo **novo** `banco/criar-administrador.php`
+
+Para criar o arquivo no VS Code:
+
+1. Na lista de arquivos da esquerda, clique com o **botao direito** na pasta
+   **`banco`**.
+2. Escolha **Novo arquivo**.
+3. Digite o nome **`criar-administrador.php`** e aperte Enter.
+4. Confira que ele apareceu **dentro** da pasta `banco`, ao lado do
+   `esquema.sql`.
+
+Escreva no arquivo **todo** o codigo abaixo e salve (**Ctrl+S**):
+
+```php
+<?php
+
+/**
+ * Cria o primeiro bibliotecario: o administrador do sistema.
+ *
+ * Rode no terminal, dentro da pasta do projeto:
+ *     php banco/criar-administrador.php
+ */
+
+require_once __DIR__ . '/../nucleo/bootstrap.php';
+
+use Modelos\Bibliotecario;
+
+// 1. Os dados do administrador.
+$nome  = 'Maria Souza';
+$email = 'admin@biblioteca.com';
+$senha = 'biblioteca123';
+
+$bibliotecarios = new Bibliotecario();
+
+// 2. Se ja existe alguem com esse e-mail, nao cadastra de novo.
+if ($bibliotecarios->buscarPorEmail($email) !== null) {
+    echo "O administrador {$email} ja esta cadastrado. Nada foi feito." . PHP_EOL;
+    exit;
+}
+
+// 3. Grava no banco. O criarComSenha() transforma a senha em hash antes.
+$id = $bibliotecarios->criarComSenha(['nome' => $nome, 'email' => $email], $senha);
+
+echo "Administrador cadastrado com o id {$id}." . PHP_EOL;
+echo "Entre em http://localhost:8000/auth-bibliotecario/login com {$email}" . PHP_EOL;
+```
+
+**Entenda, pedaco por pedaco:**
+
+| Trecho | O que faz |
+|---|---|
+| `require_once __DIR__ . '/../nucleo/bootstrap.php';` | liga o framework: configuracoes, banco e models. `__DIR__` e a pasta deste arquivo (`banco`); `/../` sobe um nivel, para a raiz do projeto |
+| `use Modelos\Bibliotecario;` | avisa que vamos usar o model criado nas partes 2 e 3 |
+| `$nome`, `$email`, `$senha` | os dados da Maria. Para outro administrador, e so trocar aqui |
+| `new Bibliotecario()` | o model: e ele que sabe falar com a tabela `bibliotecarios` |
+| `buscarPorEmail($email) !== null` | "ja existe alguem com esse e-mail?" Se sim, avisa e para (`exit`). Rodar duas vezes nao cria duas Marias |
+| `criarComSenha([...], $senha)` | grava a linha no banco — com a senha **em hash** — e devolve o `id` |
+| `echo "..." . PHP_EOL;` | escreve uma linha no terminal. `PHP_EOL` e a quebra de linha |
+
+**Entenda por que o arquivo fica em `banco/`:** o framework **bloqueia** a
+pasta `banco/` para o navegador. Se o arquivo ficasse solto na raiz do projeto,
+um visitante poderia roda-lo pelo site. Voce vai conferir isso no passo 4.4.
+
+### 4.3 Passo 2 — Rode o arquivo no terminal
+
+**TERMINAL 1**
+
+```bash
+php banco/criar-administrador.php
+```
+
+**Confira:**
+
+```text
+Administrador cadastrado com o id 1.
+Entre em http://localhost:8000/auth-bibliotecario/login com admin@biblioteca.com
+```
+
+Agora rode **o mesmo comando mais uma vez**:
+
+**TERMINAL 1**
+
+```bash
+php banco/criar-administrador.php
+```
+
+**Confira:**
+
+```text
+O administrador admin@biblioteca.com ja esta cadastrado. Nada foi feito.
+```
+
+**Entenda:** o comando `php arquivo.php` roda o arquivo **uma vez** e termina.
+Ele nao e uma pagina do site: nao passa pelo servidor do TERMINAL 2, so
+precisa do MySQL ligado. Na segunda vez, o `buscarPorEmail()` achou a Maria e
+o arquivo parou sem gravar nada.
+
+### 4.4 Passo 3a — Veja a Maria no banco
+
+**NAVEGADOR** · <http://localhost/phpmyadmin>
+
+1. Na coluna da esquerda, clique no banco **`minha_biblioteca`**.
+2. Clique na tabela **`bibliotecarios`**.
+3. Abra a aba **Visualizar**.
+
+**Confira:** existe **uma** linha, e a senha **nao aparece legivel**:
+
+| id | nome | email | senha |
+|---|---|---|---|
+| 1 | Maria Souza | admin@biblioteca.com | `$2y$12$...` (60 caracteres) |
+
+Se um dia voce vir `biblioteca123` escrito nessa coluna, alguem quebrou o
+sistema.
 
 **Entenda o hash:** pense numa impressao digital. Da pessoa se tira a digital,
 mas olhando a digital ninguem reconstroi a pessoa. O hash e a digital da
 senha:
 
-- da senha se calcula o hash;
+- da senha se calcula o hash — foi o que o `criarComSenha()` fez;
 - do hash **nao** se volta para a senha;
-- para conferir, o PHP calcula de novo a partir do que foi digitado e compara
-  as duas digitais.
+- no login, o PHP calcula de novo a partir do que foi digitado e compara.
+
+E exatamente isso que o login faz. Em `nucleo/Autenticavel.php`, a ultima
+linha do metodo `autenticar()` e:
+
+```php
+return password_verify($senha, (string) $registro['senha']) ? $registro : null;
+```
 
 Se alguem roubar a tabela `bibliotecarios`, leva as digitais — e nao as
 senhas.
 
-### 4.2 Gere o hash da senha
+**NAVEGADOR** · <http://localhost:8000/banco/criar-administrador.php>
 
-**Faca:**
+**Confira:** aparece so "Acesso negado.". O arquivo nao roda pelo site.
 
-```bash
-php -r "echo password_hash('biblioteca123', PASSWORD_DEFAULT) . PHP_EOL;"
-```
+### 4.5 Passo 3b — Entre como administradora
 
-**Confira:** aparece uma linha parecida com esta:
+**NAVEGADOR** · <http://localhost:8000/auth-bibliotecario/login>
 
-```text
-$2y$12$eM.x7vAHotRY5lfy7X/2UuRllxZWDu7GWMt8J8mnWHs7/mG6QVYJW
-```
-
-**O seu vai sair diferente — e esta certo.** Rode o comando duas vezes e
-compare: cada vez sai um hash novo. O PHP mistura um valor aleatorio (o
-*sal*) antes de calcular, entao duas pessoas com a mesma senha ficam com hashes
-diferentes no banco. O `password_verify()` sabe ler o sal que esta dentro do
-proprio hash.
-
-**Entenda as partes:**
-
-| Pedaco | Significado |
-|---|---|
-| `php -r "..."` | roda um trecho de PHP direto no terminal, sem criar arquivo |
-| `password_hash(...)` | calcula o hash |
-| `$2y$` | o algoritmo usado (bcrypt) |
-| `12$` | o "custo": quanto maior, mais lento para quem tenta adivinhar (no PHP 8.1 a 8.3 aparece `10$`) |
-
-**Copie a linha inteira** do seu hash. Voce vai colar no proximo passo.
-
-### 4.3 Insira o administrador no banco
-
-**Faca:**
-
-1. Abra <http://localhost/phpmyadmin>.
-2. Na coluna da esquerda, clique no banco **`minha_biblioteca`**.
-3. Abra a aba **SQL**.
-4. Cole o comando abaixo, trocando `COLE_AQUI_O_HASH` pelo **seu** hash:
-
-```sql
-INSERT INTO bibliotecarios (nome, email, senha)
-VALUES ('Maria Souza', 'admin@biblioteca.com', 'COLE_AQUI_O_HASH');
-```
-
-5. Clique em **Executar**.
-
-Tres cuidados que evitam 90% dos problemas:
-
-- o hash fica **entre aspas simples**, como os outros valores;
-- nao pode sobrar **espaco** antes ou depois do hash;
-- o hash tem **60 caracteres** — se faltar um pedaco, o login falha.
-
-> **Sem phpMyAdmin?** Pelo terminal da no mesmo:
-> `mysql -u root minha_biblioteca` (no Windows:
-> `C:\xampp\mysql\bin\mysql -u root minha_biblioteca`), cole o mesmo
-> `INSERT` e digite `exit` para sair.
-
-**Confira:** abra a tabela `bibliotecarios` (aba **Visualizar**). Deve haver
-uma linha:
-
-| id | nome | email | senha |
-|---|---|---|---|
-| 1 | Maria Souza | admin@biblioteca.com | `$2y$12$...` |
-
-A senha **nao aparece legivel**. Se um dia voce vir `biblioteca123` escrito
-nessa coluna, alguem quebrou o sistema.
-
-### 4.4 Entre como administrador
-
-**Faca:** abra <http://localhost:8000/auth-bibliotecario/login> e entre com
-`admin@biblioteca.com` e `biblioteca123`.
+Entre com `admin@biblioteca.com` e `biblioteca123`.
 
 **Confira:**
 
 - voce vai para a pagina inicial com a mensagem **"Bem-vindo!"**;
 - no menu, em "Conta", aparece **"Sair (bibliotecario)"**.
 
-**Faca:** clique em "Sair" e tente entrar com a senha `biblioteca000`.
+Agora clique em **"Sair"** e tente entrar com a senha **errada**
+`biblioteca000`.
 
 **Confira:** "E-mail ou senha invalidos." Repare que a mensagem nao diz se o
 erro foi no e-mail ou na senha. E de proposito: dizer "esse e-mail existe"
 ajudaria quem esta tentando adivinhar contas.
 
-Entre de novo com a senha certa antes de seguir.
+**Entre de novo com a senha certa** antes de seguir.
 
 **Entenda o caminho do login:**
 
@@ -466,8 +596,12 @@ A **sessao** e a memoria do servidor sobre o seu navegador. Enquanto o id da
 Maria estiver nela, o sistema sabe que e ela, de uma pagina para a outra.
 
 > **A Maria mora no banco, nao no codigo.** Se voce levar o projeto para
-> outro computador e rodar `php instalar.php`, a tabela nasce vazia: repita
-> os passos 4.2 e 4.3 la.
+> outro computador, o banco de la comeca vazio. Rode, no TERMINAL 1 de la,
+> `php instalar.php` e depois `php banco/criar-administrador.php`.
+
+> **Prefere cadastrar a Maria digitando SQL no phpMyAdmin?** O
+> [Apendice C](#apendice-c--outro-jeito-cadastrar-a-maria-pelo-phpmyadmin)
+> mostra esse caminho. Use **um** dos dois, nao os dois.
 
 ---
 
@@ -475,7 +609,7 @@ Maria estiver nela, o sistema sabe que e ela, de uma pagina para a outra.
 
 ### 5.1 O teste do intruso
 
-**Faca:** abra uma **janela anonima** no navegador (`Ctrl+Shift+N` no Chrome,
+**NAVEGADOR** · abra uma **janela anonima** (`Ctrl+Shift+N` no Chrome,
 `Ctrl+Shift+P` no Firefox). Nela voce **nao** esta logado. Visite:
 
 - <http://localhost:8000/bibliotecarios>
@@ -486,7 +620,8 @@ Maria estiver nela, o sistema sabe que e ela, de uma pagina para a outra.
 1. qualquer visitante ve, edita e exclui a equipe da biblioteca;
 2. qualquer visitante cria uma conta de bibliotecario — e vira administrador.
 
-Duas portas abertas. Deixe a janela anonima aberta; voce volta nela no 5.6.
+Duas portas abertas. **Deixe a janela anonima aberta**; voce volta nela no
+5.6.
 
 **Entenda a ferramenta que vai trancar as duas:**
 
@@ -506,27 +641,16 @@ codigo, e vale **so onde voce escrever**.
 
 ### 5.2 Porta 1: a lista de bibliotecarios
 
-**Faca:** em `controllers/BibliotecariosController.php`, acrescente a linha
-no construtor.
+**CODIGO** · `controllers/BibliotecariosController.php` · dentro do
+`__construct()`
 
-Antes:
-
-```php
-public function __construct()
-{
-    $this->modelo = new Bibliotecario();
-}
-```
-
-Depois:
-
-```php
-public function __construct()
-{
-    $this->exigirAutenticacao('bibliotecario');
-
-    $this->modelo = new Bibliotecario();
-}
+```diff
+     public function __construct()
+     {
++        $this->exigirAutenticacao('bibliotecario');
++
+         $this->modelo = new Bibliotecario();
+     }
 ```
 
 **Entenda:** o construtor roda **antes de qualquer acao** do controller. Uma
@@ -535,40 +659,38 @@ linha ali protege todas de uma vez: `index`, `criar`, `salvar`, `ver`,
 
 ### 5.3 Porta 2: o cadastro de contas
 
-**Faca:** em `controllers/AuthBibliotecarioController.php`, acrescente a linha
-**dentro do metodo `registrar()`**, logo no comeco:
+Sao **duas mudancas no mesmo metodo**.
 
-```php
-/** GET e POST /auth-bibliotecario/registrar */
-public function registrar(): void
-{
-    // So um bibliotecario que ja entrou pode cadastrar outro.
-    $this->exigirAutenticacao('bibliotecario');
+**CODIGO** · `controllers/AuthBibliotecarioController.php` · no **comeco** do
+metodo `registrar()`
 
-    if ($this->ehPost()) {
-        // ... o resto continua igual
+```diff
+     /** GET e POST /auth-bibliotecario/registrar */
+     public function registrar(): void
+     {
++        // So um bibliotecario que ja entrou pode cadastrar outro.
++        $this->exigirAutenticacao('bibliotecario');
++
+         if ($this->ehPost()) {
+             $this->exigirTokenValido();
 ```
 
 > **Atencao: aqui NAO e no construtor.** Este controller tambem cuida do
 > `login()`. Se a linha fosse para o construtor, a propria tela de login
-> exigiria login — e ninguem nunca mais entraria. Por isso ela vai so no
+> exigiria login — e ninguem nunca mais entraria. Por isso ela vai **so** no
 > metodo que deve ser fechado.
 
-**Faca:** ainda no `registrar()`, mais para baixo, troque o que acontece
-depois de cadastrar.
+**CODIGO** · `controllers/AuthBibliotecarioController.php` · no **fim** do
+mesmo `registrar()`, logo depois de `criarComSenha(...)`
 
-Antes:
+```diff
+             $this->modelo->criarComSenha($dados, $senha);
 
-```php
-$this->mensagem('sucesso', 'Conta criada. Agora entre com seus dados.');
-$this->redirecionar('auth-bibliotecario/login');
-```
-
-Depois:
-
-```php
-$this->mensagem('sucesso', 'Bibliotecario cadastrado.');
-$this->redirecionar('bibliotecarios');
+-            $this->mensagem('sucesso', 'Conta criada. Agora entre com seus dados.');
+-            $this->redirecionar('auth-bibliotecario/login');
++            $this->mensagem('sucesso', 'Bibliotecario cadastrado.');
++            $this->redirecionar('bibliotecarios');
+         }
 ```
 
 **Entenda:** antes, quem usava essa tela era um visitante criando a propria
@@ -578,50 +700,53 @@ equipe.
 
 ### 5.4 Tire os links que nao fazem mais sentido
 
-**Faca:** tres ajustes pequenos nas views.
+Tres ajustes pequenos, um em cada view.
 
-**a)** Em `views/auth/bibliotecario/login.php`, **apague** o bloco do fim:
+**CODIGO** · `views/auth/bibliotecario/login.php` · no **fim** do arquivo,
+apague o link "Criar uma conta"
 
-```php
-<p class="text-center mt-4 mb-0">
-    <a href="<?= url('auth-bibliotecario/registrar') ?>">Criar uma conta</a>
-</p>
+```diff
+     <button class="btn btn-primary w-100" type="submit">Entrar</button>
+ </form>
+-
+-<p class="text-center mt-4 mb-0">
+-    <a href="<?= url('auth-bibliotecario/registrar') ?>">Criar uma conta</a>
+-</p>
 ```
 
-**b)** Em `views/auth/bibliotecario/registrar.php`, troque o link do fim:
+**CODIGO** · `views/auth/bibliotecario/registrar.php` · no **fim** do arquivo,
+troque o link
 
-```php
-<p class="text-center mt-4 mb-0">
-    <a href="<?= url('bibliotecarios') ?>">Voltar para a lista</a>
-</p>
+```diff
+ <p class="text-center mt-4 mb-0">
+-    <a href="<?= url('auth-bibliotecario/login') ?>">Ja tenho uma conta</a>
++    <a href="<?= url('bibliotecarios') ?>">Voltar para a lista</a>
+ </p>
 ```
 
-**c)** Em `views/bibliotecarios/index.php`, faca o botao "Novo registro"
-apontar para a tela certa:
+**CODIGO** · `views/bibliotecarios/index.php` · no **topo** do arquivo, troque
+o botao "Novo registro"
 
-Antes:
-
-```php
-<a class="btn btn-primary" href="<?= url('bibliotecarios/criar') ?>">Novo registro</a>
+```diff
+         <a class="btn btn-outline-secondary" href="<?= url('bibliotecarios/relatorio') ?>">Relatorio PDF</a>
+-        <a class="btn btn-primary" href="<?= url('bibliotecarios/criar') ?>">Novo registro</a>
++        <a class="btn btn-primary" href="<?= url('auth-bibliotecario/registrar') ?>">Novo bibliotecario</a>
 ```
 
-Depois:
-
-```php
-<a class="btn btn-primary" href="<?= url('auth-bibliotecario/registrar') ?>">Novo bibliotecario</a>
-```
-
-**Entenda o item c:** lembra do aviso da parte 2? O formulario de
+**Entenda o ultimo ajuste:** lembra do aviso da parte 2? O formulario de
 `/bibliotecarios/criar` so pede o `nome`. A tela `registrar` pede nome,
 e-mail e senha, e grava a senha em hash com `criarComSenha()`. E a unica que
 cria um bibliotecario capaz de entrar.
 
 ### 5.5 Esconda o item do menu
 
-**Faca:** em `configuracoes/menu.php`, acrescente `'auth' => 'sim'`:
+**CODIGO** · `configuracoes/menu.php` · na linha de Bibliotecarios
 
-```php
-['rota' => 'bibliotecarios', 'texto' => 'Bibliotecarios', 'auth' => 'sim'],
+```diff
+     ['rota' => '', 'texto' => 'Inicio'],
+-    ['rota' => 'bibliotecarios', 'texto' => 'Bibliotecarios'],
++    ['rota' => 'bibliotecarios', 'texto' => 'Bibliotecarios', 'auth' => 'sim'],
+     // scaffold:crud
 ```
 
 **Entenda:** `'auth' => 'sim'` mostra o item so para quem esta logado.
@@ -632,7 +757,7 @@ cria um bibliotecario capaz de entrar.
 
 ### 5.6 Confira: o teste do intruso, de novo
 
-**Faca:** volte a **janela anonima** e visite os mesmos enderecos.
+**NAVEGADOR** · na **janela anonima**, visite os mesmos enderecos
 
 **Confira:**
 
@@ -643,7 +768,7 @@ cria um bibliotecario capaz de entrar.
 | `/auth-bibliotecario/login` | abria | continua abrindo, **sem** o link "Criar uma conta" |
 | menu lateral | mostrava "Bibliotecarios" | mostra so "Inicio" e "Entrar (bibliotecario)" |
 
-**Faca:** agora na janela **normal**, logado como Maria:
+**NAVEGADOR** · na janela **normal**, logado como Maria
 
 1. Clique em **Bibliotecarios** > **Novo bibliotecario**.
 2. Cadastre `Joao Lima`, `joao@biblioteca.com`, senha `joao123`.
@@ -651,11 +776,12 @@ cria um bibliotecario capaz de entrar.
 **Confira:** voce volta para a lista com "Bibliotecario cadastrado." e os dois
 nomes aparecem.
 
-**Faca:** saia e entre como `joao@biblioteca.com` / `joao123`. Funciona. Saia
-de novo e volte a entrar como Maria.
+Saia e entre como `joao@biblioteca.com` / `joao123`: funciona. Saia de novo e
+**volte a entrar como Maria**.
 
 No phpMyAdmin, a senha do Joao tambem comeca com `$2y$` — dessa vez quem
-calculou o hash foi o `criarComSenha()`, e nao voce.
+calculou o hash foi a tela `registrar`, com o mesmo `criarComSenha()` do seu
+arquivo.
 
 ---
 
@@ -663,7 +789,7 @@ calculou o hash foi o `criarComSenha()`, e nao voce.
 
 ### 6.1 Gere o CRUD ja protegido
 
-**Faca:**
+**TERMINAL 1** · e **uma linha so**; copie inteira
 
 ```bash
 php console.php scaffold:crud livros titulo:string autor:string ano:integer disponivel:boolean --auth=bibliotecario
@@ -688,17 +814,19 @@ Rotas protegidas pelo login /auth-bibliotecario.
 
 Repare: **nenhum aviso de rota publica**.
 
-**Entenda os tipos:**
+**Entenda os campos:**
 
-| Campo | Tipo | Coluna no MySQL | Campo na tela |
-|---|---|---|---|
-| `titulo` | `string` | `VARCHAR(255)` | caixa de texto |
-| `autor` | `string` | `VARCHAR(255)` | caixa de texto |
-| `ano` | `integer` | `INT` | caixa de numero |
-| `disponivel` | `boolean` | `TINYINT(1)` | caixa de marcar (grava 1 ou 0) |
+| Pedaco do comando | Coluna no MySQL | Campo na tela |
+|---|---|---|
+| `titulo:string` | `VARCHAR(255)` | caixa de texto |
+| `autor:string` | `VARCHAR(255)` | caixa de texto |
+| `ano:integer` | `INT` | caixa de numero |
+| `disponivel:boolean` | `TINYINT(1)` | caixa de marcar (grava 1 ou 0) |
+| `--auth=bibliotecario` | — | todas as rotas exigem o login do bibliotecario |
 
-**Entenda o `--auth=bibliotecario`:** abra `controllers/LivrosController.php`.
-Cada acao comeca com a mesma linha que voce escreveu a mao na parte 5:
+**Entenda o `--auth=bibliotecario`:** abra `controllers/LivrosController.php`
+(so para ler). Cada acao comeca com a mesma linha que voce escreveu a mao na
+parte 5:
 
 ```php
 public function index(): void
@@ -714,7 +842,7 @@ proteger depois.)
 
 ### 6.2 Acrescente a pesquisa
 
-**Faca:**
+**TERMINAL 1**
 
 ```bash
 php console.php scaffold:pesquisa livros titulo autor disponivel
@@ -738,6 +866,8 @@ pela query string: /livros?titulo=...
 Para desfazer: php console.php scaffold:pesquisa livros --remover
 ```
 
+A ultima linha e uma **dica**; nao rode o `--remover`.
+
 **Entenda:** este comando **nao cria** arquivos, ele **altera** dois que ja
 existiam (`~`). Ele le no `banco/esquema.sql` o tipo de cada coluna e escolhe
 o filtro certo: texto procura por trecho, `boolean` vira a lista Todos / Sim /
@@ -745,38 +875,48 @@ Nao.
 
 ### 6.3 Menu e rotulos
 
-**Faca:** em `configuracoes/menu.php`, proteja o item novo tambem:
+**CODIGO** · `configuracoes/menu.php` · na linha de Livros
 
-```php
-['rota' => 'livros', 'texto' => 'Livros', 'auth' => 'sim'],
+```diff
+     ['rota' => 'bibliotecarios', 'texto' => 'Bibliotecarios', 'auth' => 'sim'],
+-    ['rota' => 'livros', 'texto' => 'Livros'],
++    ['rota' => 'livros', 'texto' => 'Livros', 'auth' => 'sim'],
+     // scaffold:crud
 ```
 
-**Faca:** o gerador usou o nome da coluna como rotulo (`titulo`,
-`disponivel`). Troque por texto de gente — `Titulo`, `Autor`, `Ano`,
-`Disponivel` — nestes lugares:
+O gerador usou o nome da coluna como rotulo das telas (`titulo`,
+`disponivel`). Troque por texto de gente. Use o **Localizar e substituir** do
+VS Code (**Ctrl+H**) dentro de cada arquivo:
 
-| Arquivo | Onde |
-|---|---|
-| `views/livros/formulario.php` | nas tags `<label class="form-label" ...>` |
-| `views/livros/index.php` | nos `<label>` da pesquisa e nos `<th>` da tabela |
-| `views/livros/ver.php` | nas tags `<dt>` |
+**CODIGO** · rotulos das telas
 
-Exemplo em `formulario.php`:
+| Arquivo | Troque | Por |
+|---|---|---|
+| `views/livros/formulario.php` | `>titulo</label>` `>autor</label>` `>ano</label>` `>disponivel</label>` | `>Titulo</label>` `>Autor</label>` `>Ano</label>` `>Disponivel</label>` |
+| `views/livros/index.php` | os mesmos quatro `</label>` (da pesquisa) e `<th>titulo</th>` `<th>autor</th>` `<th>ano</th>` `<th>disponivel</th>` | `Titulo`, `Autor`, `Ano`, `Disponivel` |
+| `views/livros/ver.php` | `>titulo</dt>` `>autor</dt>` `>ano</dt>` `>disponivel</dt>` | `>Titulo</dt>` `>Autor</dt>` `>Ano</dt>` `>Disponivel</dt>` |
+| `views/bibliotecarios/index.php` | `<th>nome</th>` | `<th>Nome</th>` |
+| `views/bibliotecarios/ver.php` | `>nome</dt>` | `>Nome</dt>` |
 
-```php
-<label class="form-label" for="titulo">titulo</label>     <!-- antes  -->
-<label class="form-label" for="titulo">Titulo</label>     <!-- depois -->
+Exemplo em `views/livros/formulario.php`:
+
+```diff
+-        <label class="form-label" for="titulo">titulo</label>
++        <label class="form-label" for="titulo">Titulo</label>
 ```
 
-Mude **so o texto entre as tags**. O `for="titulo"`, o `name="titulo"` e o
-`$registro['titulo']` sao o nome da coluna e precisam continuar iguais.
+Mude **so o texto que aparece entre as tags**. O `for="titulo"`, o
+`name="titulo"` e o `$registro['titulo']` sao o nome da coluna e precisam
+continuar iguais.
 
-Aproveite e faca o mesmo em `views/bibliotecarios/index.php` e `ver.php`
-(`nome` vira `Nome`).
+> Um teste gerado procura a palavra `nome` na lista de bibliotecarios. Com o
+> rotulo novo ele vai reclamar — voce acerta isso na parte 8.2.
 
 ### 6.4 Confira usando
 
-**Faca:** abra <http://localhost:8000/livros> e cadastre tres livros:
+**NAVEGADOR** · <http://localhost:8000/livros>
+
+Cadastre tres livros:
 
 | Titulo | Autor | Ano | Disponivel |
 |---|---|---|---|
@@ -786,11 +926,11 @@ Aproveite e faca o mesmo em `views/bibliotecarios/index.php` e `ver.php`
 
 **Confira, um por um:**
 
-1. **Validacao.** Clique em "Novo", preencha so o autor e salve. A tela volta
-   com "O campo Titulo e obrigatorio." embaixo do campo, e o autor que voce
-   digitou **continua la**.
-2. **Pesquisa por trecho.** No campo Autor digite `machado` e pesquise. Aparecem
-   os dois livros do Machado de Assis.
+1. **Validacao.** Clique em "Novo", preencha **so** o autor e salve. A tela
+   volta com "O campo Titulo e obrigatorio." embaixo do campo, e o autor que
+   voce digitou **continua la**.
+2. **Pesquisa por trecho.** No campo Autor digite `machado` e pesquise.
+   Aparecem os dois livros do Machado de Assis.
 3. **Pesquisa por Sim/Nao.** Limpe o autor e escolha Disponivel = Nao. So
    aparece Quincas Borba.
 4. **Pesquisa no endereco.** Olhe a barra do navegador:
@@ -824,7 +964,9 @@ Ate aqui, toda validacao veio pronta do gerador. Agora voce escreve uma regra
 
 ### 7.1 Veja o problema primeiro
 
-**Faca:** em <http://localhost:8000/livros/criar>, tente dois cadastros:
+**NAVEGADOR** · <http://localhost:8000/livros/criar>
+
+Tente dois cadastros:
 
 1. titulo `Livro do futuro`, ano `2090`;
 2. titulo `Livro sem ano`, com o ano **em branco**.
@@ -837,8 +979,8 @@ Ate aqui, toda validacao veio pronta do gerador. Agora voce escreve uma regra
    `Incorrect integer value`. (Em alguns MySQL ele e gravado com ano `0`, sem
    erro nenhum — o que tambem esta errado.)
 
-**Faca:** na listagem, exclua o "Livro do futuro" (e o "Livro sem ano", se ele
-aparecer).
+**NAVEGADOR** · na listagem de livros, exclua o "Livro do futuro" (e o "Livro
+sem ano", se ele aparecer).
 
 **Entenda os dois problemas:**
 
@@ -872,7 +1014,7 @@ mesmo tempo. **Voce nao vai mexer no controller.**
 
 ### 7.3 Escreva a regra
 
-**Faca:** abra `modelos/Livro.php`. Hoje o metodo `validar()` esta assim:
+Hoje o metodo `validar()` de `modelos/Livro.php` esta assim:
 
 ```php
 public function validar(array $dados, int|string|null $ignorarId = null): array
@@ -894,8 +1036,7 @@ Voce vai fazer **duas mudancas**, as duas em volta da linha
 | 1 | `->obrigatorio('ano')` | na linha **de cima** de `->numerico('ano')` |
 | 2 | o comentario e o bloco `->personalizada(...)` | na linha **de baixo** de `->numerico('ano')`, **antes** de `->erros();` |
 
-Olhando as mudancas no lugar — as linhas com `+` sao as novas (**nao digite o
-`+`**):
+**CODIGO** · `modelos/Livro.php` · dentro do metodo `validar()`
 
 ```diff
      public function validar(array $dados, int|string|null $ignorarId = null): array
@@ -917,7 +1058,7 @@ Olhando as mudancas no lugar — as linhas com `+` sao as novas (**nao digite o
 ```
 
 Depois das mudancas, o arquivo `modelos/Livro.php` **inteiro** fica assim. Se
-preferir, apague tudo o que tem nele e cole isto:
+preferir, apague tudo o que tem nele, cole isto e salve:
 
 ```php
 <?php
@@ -1007,7 +1148,7 @@ continua certa no ano que vem sem ninguem mexer nela.
 
 ### 7.5 Confira na tela
 
-**Faca:** em <http://localhost:8000/livros/criar>, tente:
+**NAVEGADOR** · <http://localhost:8000/livros/criar>
 
 | Titulo | Ano | O que deve acontecer |
 |---|---|---|
@@ -1019,7 +1160,7 @@ continua certa no ano que vem sem ninguem mexer nela.
 **Confira** tambem que, quando o formulario volta com a mensagem, **o titulo e
 o autor que voce digitou continuam la**.
 
-**Faca:** abra o "Dom Casmurro", clique em **Editar**, troque o ano para
+**NAVEGADOR** · abra o "Dom Casmurro", clique em **Editar**, troque o ano para
 `2090` e salve.
 
 **Confira:** a edicao tambem e recusada, com a mesma mensagem. Voce nao tocou
@@ -1036,7 +1177,7 @@ funcionando depois que alguem mexer no codigo.
 
 ### 8.1 Rode todos os testes
 
-**Faca:**
+**TERMINAL 1**
 
 ```bash
 php testes/executar.php
@@ -1049,21 +1190,27 @@ php testes/executar.php
 
 1) Controllers\AuthBibliotecarioControllerTest::testeRegistraEntraESai
    Nao esperava null
+
 2) Controllers\AuthBibliotecarioControllerTest::testeRecusaCadastroInvalido
    Esperava true mas recebeu false
+
 3) Controllers\AuthBibliotecarioControllerTest::testeRecusaEmailRepetido
    Esperava true mas recebeu false
+
 4) Controllers\BibliotecariosControllerTest::testeExecutaRotasDoCrud
    Esperava 200 mas recebeu 302
+
 5) Controllers\BibliotecariosControllerTest::testeRecusaDadosInvalidos
    Esperava true mas recebeu false
+
 6) Controllers\BibliotecariosControllerTest::testeExclusaoNaoAceitaGet
    Esperava 404 mas recebeu 302
+
 7) Controllers\BibliotecariosControllerTest::testeGeraRelatorioEmPdf
    Esperava 200 mas recebeu 302
 
 ----------------------------------------------------------
-Testes: 84 | Passaram: 77 | Falharam: 7 | Erros: 0 | Assercoes: 212
+Testes: 86 | Passaram: 79 | Falharam: 7 | Erros: 0 | Assercoes: 216
 
 ATENCAO: 7 teste(s) com problema.
 ```
@@ -1093,48 +1240,79 @@ mesmo que o `login()` faz quando a senha confere.
 
 ### 8.2 Conserte os testes da lista de bibliotecarios
 
-**Faca:** em `testes/controllers/BibliotecariosControllerTest.php`, no fim do
-metodo `preparar()`:
+Duas mudancas no mesmo arquivo. O `use Nucleo\Sessao;` ja esta no topo dele.
 
-```php
-    $this->modelo = new Bibliotecario();
+**CODIGO** · `testes/controllers/BibliotecariosControllerTest.php` · no
+**fim** do metodo `preparar()`
 
-    // As rotas agora exigem login: o teste ja comeca logado.
-    Sessao::definir(Sessao::chaveAutenticacao('bibliotecario'), 1);
-}
+```diff
+         $this->modelo = new Bibliotecario();
++
++        // As rotas agora exigem login: o teste ja comeca logado.
++        Sessao::definir(Sessao::chaveAutenticacao('bibliotecario'), 1);
+     }
 ```
 
-O `use Nucleo\Sessao;` ja esta no topo do arquivo.
+**CODIGO** · `testes/controllers/BibliotecariosControllerTest.php` · no
+**comeco** do metodo `testeExecutaRotasDoCrud()`
 
-**Entenda:** o `preparar()` roda **antes de cada teste** da classe. Colocando
-a linha ali, todos os testes deste arquivo comecam logados.
+```diff
+         $lista = $this->requisitar('bibliotecarios');
+         $this->assertIgual(200, $lista->status);
+-        $this->assertContem('nome', $lista->html);
++        $this->assertContem('Nome', $lista->html);
+```
+
+**Entenda:**
+
+- o `preparar()` roda **antes de cada teste** da classe. Com a linha ali,
+  todos os testes deste arquivo comecam logados;
+- o `assertContem('nome', ...)` procurava o rotulo antigo da tabela. Na 6.3
+  voce trocou `nome` por `Nome` — e para o teste, maiuscula e minuscula sao
+  textos diferentes.
 
 ### 8.3 Conserte os testes do cadastro de contas
 
-**Faca:** em `testes/controllers/AuthBibliotecarioControllerTest.php`,
-acrescente a linha como **primeira linha** destes tres testes:
+Quatro mudancas, todas em `testes/controllers/AuthBibliotecarioControllerTest.php`.
 
-- `testeRegistraEntraESai`
-- `testeRecusaCadastroInvalido`
-- `testeRecusaEmailRepetido`
+**CODIGO** · `testes/controllers/AuthBibliotecarioControllerTest.php` · no
+metodo `testeRegistraEntraESai()` — uma linha no comeco e o destino esperado
 
-Assim:
-
-```php
-public function testeRecusaCadastroInvalido(): void
-{
-    Sessao::definir(Sessao::chaveAutenticacao('bibliotecario'), 1);
-
-    $curta = $this->postar('auth-bibliotecario/registrar', [
-    // ... o resto continua igual
+```diff
+     public function testeRegistraEntraESai(): void
+     {
++        Sessao::definir(Sessao::chaveAutenticacao('bibliotecario'), 1);
++
+         $registrar = $this->postar('auth-bibliotecario/registrar', [
+             'nome'  => 'Ana',
+             'email' => 'ana@example.com',
+             'senha' => 'segredo123',
+         ]);
+-        $this->assertVerdadeiro($registrar->redirecionouPara('auth-bibliotecario/login'));
++        $this->assertVerdadeiro($registrar->redirecionouPara('bibliotecarios'));
 ```
 
-**Faca:** em `testeRegistraEntraESai`, troque o destino esperado depois do
-cadastro — lembra que voce mudou o redirecionamento no 5.3?
+O destino mudou porque, na 5.3, voce trocou o `redirecionar()` do cadastro.
 
-```php
-$this->assertVerdadeiro($registrar->redirecionouPara('auth-bibliotecario/login'));  // antes
-$this->assertVerdadeiro($registrar->redirecionouPara('bibliotecarios'));            // depois
+**CODIGO** · mesmo arquivo · no comeco do metodo
+`testeRecusaCadastroInvalido()`
+
+```diff
+     public function testeRecusaCadastroInvalido(): void
+     {
++        Sessao::definir(Sessao::chaveAutenticacao('bibliotecario'), 1);
++
+         $curta = $this->postar('auth-bibliotecario/registrar', [
+```
+
+**CODIGO** · mesmo arquivo · no comeco do metodo `testeRecusaEmailRepetido()`
+
+```diff
+     public function testeRecusaEmailRepetido(): void
+     {
++        Sessao::definir(Sessao::chaveAutenticacao('bibliotecario'), 1);
++
+         $this->modelo->criarComSenha(['email' => 'ana@example.com'], 'segredo123');
 ```
 
 > **Por que aqui nao vai no `preparar()`?** Porque dois testes deste arquivo —
@@ -1142,13 +1320,18 @@ $this->assertVerdadeiro($registrar->redirecionouPara('bibliotecarios'));        
 > **deslogados**: eles provam que o login **falhou**. Se ja comecassem
 > logados, nao provariam nada.
 
-**Faca:**
+**TERMINAL 1**
 
 ```bash
 php testes/executar.php Bibliotecario
 ```
 
-**Confira:** `Testes: 12 | Passaram: 12 | Falharam: 0`.
+**Confira:** a ultima linha de numeros comeca com
+`Testes: 12 | Passaram: 12 | Falharam: 0`.
+
+**Entenda o `Bibliotecario` no fim do comando:** e um **filtro**. Roda so os
+testes cujo nome tem essa palavra, em vez dos 86. Mais rapido enquanto voce
+conserta um arquivo.
 
 ### 8.4 Um teste que prova a trava
 
@@ -1156,21 +1339,26 @@ Os consertos fizeram os testes antigos passarem. Mas **nenhum** teste prova
 ainda a coisa mais importante da aula: que um visitante nao cria conta de
 bibliotecario.
 
-**Faca:** em `testes/controllers/AuthBibliotecarioControllerTest.php`,
-acrescente este metodo antes do `}` final da classe:
+**CODIGO** · `testes/controllers/AuthBibliotecarioControllerTest.php` · no
+**fim** do arquivo: depois do `}` do ultimo teste e **antes** do `}` final,
+que fecha a classe
 
-```php
-public function testeVisitanteNaoCadastraBibliotecario(): void
-{
-    $resposta = $this->postar('auth-bibliotecario/registrar', [
-        'nome'  => 'Intruso',
-        'email' => 'intruso@example.com',
-        'senha' => 'segredo123',
-    ]);
-
-    $this->assertVerdadeiro($resposta->redirecionouPara('auth-bibliotecario/login'));
-    $this->assertIgual(0, $this->modelo->contar());
-}
+```diff
+         $this->assertFalso(autenticado('bibliotecario'));
+     }
++
++    public function testeVisitanteNaoCadastraBibliotecario(): void
++    {
++        $resposta = $this->postar('auth-bibliotecario/registrar', [
++            'nome'  => 'Intruso',
++            'email' => 'intruso@example.com',
++            'senha' => 'segredo123',
++        ]);
++
++        $this->assertVerdadeiro($resposta->redirecionouPara('auth-bibliotecario/login'));
++        $this->assertIgual(0, $this->modelo->contar());
++    }
+ }
 ```
 
 **Entenda, linha por linha:**
@@ -1183,7 +1371,7 @@ public function testeVisitanteNaoCadastraBibliotecario(): void
 | `redirecionouPara('auth-bibliotecario/login')` | o visitante foi mandado para o login |
 | `assertIgual(0, ...->contar())` | e nenhuma conta foi criada no banco |
 
-**Faca:**
+**TERMINAL 1**
 
 ```bash
 php testes/executar.php Bibliotecario
@@ -1217,48 +1405,41 @@ Testes: 13 | Passaram: 13 | Falharam: 0 | Erros: 0 | Assercoes: 54
 TUDO CERTO! O sistema esta funcionando.
 ```
 
-Os tempos mudam de uma maquina para outra.
+Os tempos entre parenteses mudam de uma maquina para outra.
 
-**Prove que o teste presta.** Um teste que nunca falha nao vigia nada. Em
-`AuthBibliotecarioController.php`, **comente** a linha da trava:
+**Prove que o teste presta.** Um teste que nunca falha nao vigia nada.
 
-```php
-// $this->exigirAutenticacao('bibliotecario');
+**CODIGO** · `controllers/AuthBibliotecarioController.php` · no `registrar()`,
+**comente** a linha da trava (so para o experimento)
+
+```diff
+-        $this->exigirAutenticacao('bibliotecario');
++        // $this->exigirAutenticacao('bibliotecario');
 ```
 
-Rode de novo: `visitante nao cadastra bibliotecario` **falha**. Agora
-**descomente** a linha e rode mais uma vez: volta a passar. Se um dia alguem
-apagar a trava sem querer, esse teste avisa.
+**TERMINAL 1**
+
+```bash
+php testes/executar.php Bibliotecario
+```
+
+**Confira:** `visitante nao cadastra bibliotecario` **falha**.
+
+Agora **tire o `//`** para a linha voltar ao normal, e rode o mesmo comando de
+novo: volta a passar. Se um dia alguem apagar a trava sem querer, esse teste
+avisa.
 
 ### 8.5 Dois testes para a regra do ano
 
 A regra da parte 7 funciona na tela. Agora ela ganha testes, para ninguem
 estraga-la sem perceber.
 
-**Faca:** abra `testes/modelos/LivroTest.php`. Ele foi gerado na parte 6 e
-termina assim:
+O arquivo `testes/modelos/LivroTest.php` foi gerado na parte 6 e hoje termina
+com o metodo `testeValidaOsCamposObrigatorios()`, seguido do `}` que fecha a
+classe.
 
-```php
-    public function testeValidaOsCamposObrigatorios(): void
-    {
-        $dados = [
-            'titulo' => '',
-            'autor' => 'Teste',
-            'ano' => 1,
-            'disponivel' => 1,
-        ];
-
-        $erros = $this->modelo->validar($dados);
-
-        $this->assertNaoVazio($erros);
-        $this->assertTemChave('titulo', $erros);
-    }
-}
-```
-
-Cole os dois metodos novos **depois do `}` que fecha o
-`testeValidaOsCamposObrigatorios()`** e **antes do `}` final**, que fecha a
-classe. As linhas com `+` sao as novas (**nao digite o `+`**):
+**CODIGO** · `testes/modelos/LivroTest.php` · no **fim** do arquivo: depois do
+`}` do `testeValidaOsCamposObrigatorios()` e **antes** do `}` final
 
 ```diff
          $this->assertNaoVazio($erros);
@@ -1289,42 +1470,11 @@ classe. As linhas com `+` sao as novas (**nao digite o `+`**):
  }
 ```
 
-O fim do arquivo fica assim:
-
-```php
-        $this->assertNaoVazio($erros);
-        $this->assertTemChave('titulo', $erros);
-    }
-
-    public function testeRecusaAnoNoFuturo(): void
-    {
-        $anoQueVem = (int) date('Y') + 1;
-
-        $erros = $this->modelo->validar([
-            'titulo' => 'Livro do futuro',
-            'ano'    => $anoQueVem,
-        ]);
-
-        $this->assertTemChave('ano', $erros);
-    }
-
-    public function testeAceitaOAnoAtual(): void
-    {
-        $erros = $this->modelo->validar([
-            'titulo' => 'Livro de agora',
-            'ano'    => date('Y'),
-        ]);
-
-        $this->assertVazio($erros);
-    }
-}
-```
-
 **Entenda:**
 
 | Trecho | O que faz |
 |---|---|
-| `$this->modelo->validar([...])` | chama a regra direto no model, sem navegador e sem banco |
+| `$this->modelo->validar([...])` | chama a regra direto no model, sem navegador |
 | `(int) date('Y') + 1` | o ano que vem. Nao use `2090` fixo: o teste tem que estar certo em qualquer ano |
 | `assertTemChave('ano', $erros)` | "tem que existir um erro no campo `ano`" |
 | `assertVazio($erros)` | "nao pode existir erro nenhum" |
@@ -1333,7 +1483,7 @@ O fim do arquivo fica assim:
 exatamente ai que a pessoa troca `<=` por `<` sem querer. Um teste com `1899`
 nunca perceberia esse erro; um teste com o ano atual percebe.
 
-**Faca:**
+**TERMINAL 1**
 
 ```bash
 php testes/executar.php Livro
@@ -1343,18 +1493,18 @@ php testes/executar.php Livro
 
 ```text
 Controllers\LivrosControllerTest
-  PASSOU executa rotas do crud (68.6ms)
-  PASSOU recusa dados invalidos (19.6ms)
-  PASSOU recusa formulario sem token (11.4ms)
-  PASSOU exclusao nao aceita get (10.7ms)
-  PASSOU gera relatorio em pdf (23.4ms)
-  PASSOU exige login nas rotas (9.2ms)
+  PASSOU executa rotas do crud (28.8ms)
+  PASSOU recusa dados invalidos (15.7ms)
+  PASSOU recusa formulario sem token (12.8ms)
+  PASSOU exclusao nao aceita get (10.4ms)
+  PASSOU gera relatorio em pdf (18.4ms)
+  PASSOU exige login nas rotas (8.5ms)
 
 Modelos\LivroTest
-  PASSOU executa crud completo (20.5ms)
-  PASSOU valida os campos obrigatorios (6.9ms)
-  PASSOU recusa ano no futuro (9.5ms)
-  PASSOU aceita o ano atual (6.9ms)
+  PASSOU executa crud completo (8.2ms)
+  PASSOU valida os campos obrigatorios (5.7ms)
+  PASSOU recusa ano no futuro (7.0ms)
+  PASSOU aceita o ano atual (5.5ms)
 
 ----------------------------------------------------------
 Testes: 10 | Passaram: 10 | Falharam: 0 | Erros: 0 | Assercoes: 37
@@ -1362,13 +1512,28 @@ Testes: 10 | Passaram: 10 | Falharam: 0 | Erros: 0 | Assercoes: 37
 TUDO CERTO! O sistema esta funcionando.
 ```
 
-**Prove que o teste presta.** Em `modelos/Livro.php`, troque o `<=` da regra
-por `<`. Rode `php testes/executar.php Livro`: **aceita o ano atual** falha.
-Volte o `<=` e rode de novo: tudo passa.
+**Prove que o teste presta.**
+
+**CODIGO** · `modelos/Livro.php` · na regra, troque `<=` por `<` (so para o
+experimento)
+
+```diff
+-                (int) ($dados['ano'] ?? 0) <= (int) date('Y'),
++                (int) ($dados['ano'] ?? 0) < (int) date('Y'),
+```
+
+**TERMINAL 1**
+
+```bash
+php testes/executar.php Livro
+```
+
+**Confira:** `aceita o ano atual` **falha**. Volte o `<=` e rode o mesmo
+comando de novo: tudo passa.
 
 ### 8.6 Todos os testes
 
-**Faca:**
+**TERMINAL 1**
 
 ```bash
 php testes/executar.php
@@ -1377,7 +1542,7 @@ php testes/executar.php
 **Confira:**
 
 ```text
-Testes: 87 | Passaram: 87 | Falharam: 0 | Erros: 0 | Assercoes: 245
+Testes: 89 | Passaram: 89 | Falharam: 0 | Erros: 0 | Assercoes: 249
 
 TUDO CERTO! O sistema esta funcionando.
 ```
@@ -1386,13 +1551,19 @@ TUDO CERTO! O sistema esta funcionando.
 
 ## Parte 9 — Arrumacao final (10 min)
 
-**1. Nome do sistema.** Em `configuracoes/app.php`:
+### 9.1 Nome do sistema
 
-```php
-'nome' => 'Biblioteca da Escola',
+**CODIGO** · `configuracoes/app.php` · na chave `nome`
+
+```diff
+-    'nome' => 'Framework MVC - Curso Tecnico',
++    'nome' => 'Biblioteca da Escola',
 ```
 
-**2. Pagina inicial.** Troque todo o conteudo de `views/home/index.php` por:
+### 9.2 Pagina inicial
+
+**CODIGO** · `views/home/index.php` · **apague tudo** o que tem no arquivo e
+coloque isto
 
 ```php
 <div class="card border-0 shadow-sm">
@@ -1413,35 +1584,58 @@ TUDO CERTO! O sistema esta funcionando.
 `exigirAutenticacao()`, so que sem redirecionar: devolve `true` ou `false`, e
 a view escolhe o botao.
 
-**3. Atualize o teste da pagina inicial.** Rode os testes:
+**NAVEGADOR** · <http://localhost:8000>
+
+**Confira:** logado, aparece "Ver os livros"; na janela anonima, "Entrar".
+
+### 9.3 Atualize o teste da pagina inicial
+
+**TERMINAL 1**
 
 ```bash
 php testes/executar.php
 ```
 
-Um teste do proprio framework falha:
+**Confira:** um teste do proprio framework falha:
 
 ```text
 1) Nucleo\RoteamentoTest::testeRaizAbreAPaginaInicial
    Esperava encontrar "Bem-vindo ao framework MVC" no texto
+
+----------------------------------------------------------
+Testes: 89 | Passaram: 88 | Falharam: 1 | Erros: 0 | Assercoes: 249
 ```
 
-E a mesma historia da parte 8: o teste confere se a pagina inicial mostra o
-texto antigo, e voce trocou esse texto de proposito.
+**Entenda:** e a mesma historia da parte 8. O teste confere se a pagina
+inicial mostra o texto antigo, e voce trocou esse texto de proposito.
 
-**Faca:** em `testes/nucleo/RoteamentoTest.php`, no metodo
-`testeRaizAbreAPaginaInicial()`, troque so o texto procurado:
+**CODIGO** · `testes/nucleo/RoteamentoTest.php` · no metodo
+`testeRaizAbreAPaginaInicial()`
 
-```php
-$this->assertContem('Bem-vindo ao framework MVC', $resposta->html);   // antes
-$this->assertContem('Biblioteca da Escola', $resposta->html);         // depois
+```diff
+         $this->assertIgual(200, $resposta->status);
+-        $this->assertContem('Bem-vindo ao framework MVC', $resposta->html);
++        $this->assertContem('Biblioteca da Escola', $resposta->html);
 ```
 
-**Confira:** `php testes/executar.php` volta a terminar com
-`Testes: 87 | Passaram: 87 | Falharam: 0` e `TUDO CERTO!`.
+**TERMINAL 1**
 
-**4. Olhe tudo uma ultima vez.** Navegue por todas as telas logado e
-deslogado, procurando rotulo cru e aviso de PHP na tela.
+```bash
+php testes/executar.php
+```
+
+**Confira:**
+
+```text
+Testes: 89 | Passaram: 89 | Falharam: 0 | Erros: 0 | Assercoes: 249
+
+TUDO CERTO! O sistema esta funcionando.
+```
+
+### 9.4 Olhe tudo uma ultima vez
+
+**NAVEGADOR** · navegue por todas as telas logado e na janela anonima,
+procurando rotulo cru e aviso de PHP na tela.
 
 ---
 
@@ -1449,9 +1643,13 @@ deslogado, procurando rotulo cru e aviso de PHP na tela.
 
 Marque antes de chamar o professor:
 
-- [ ] `php testes/executar.php` termina com `TUDO CERTO!` (87 testes), ja
+- [ ] `php testes/executar.php` termina com `TUDO CERTO!` (89 testes), ja
       com a pagina inicial nova
+- [ ] `php banco/criar-administrador.php`, rodado de novo, responde "ja esta
+      cadastrado"
 - [ ] No phpMyAdmin, a senha da Maria e a do Joao comecam com `$2y$`
+- [ ] <http://localhost:8000/banco/criar-administrador.php> mostra "Acesso
+      negado."
 - [ ] Entro com `admin@biblioteca.com` / `biblioteca123`, e senha errada e
       recusada
 - [ ] Na janela anonima, `/bibliotecarios`, `/livros` e
@@ -1468,10 +1666,10 @@ Marque antes de chamar o professor:
 - [ ] Livro com ano `2090` e recusado, no cadastro **e** na edicao; o ano
       atual e aceito
 - [ ] Pesquisar autor `machado` traz os dois livros do Machado de Assis
-- [ ] Sei explicar, com as minhas palavras: por que o administrador foi
-      inserido no banco, por que a senha e um hash, por que a trava do
-      `registrar()` nao vai no construtor e por que a regra do ano fica no
-      model e nao no controller
+- [ ] Sei explicar, com as minhas palavras: por que a Maria foi cadastrada
+      por um arquivo e nao pela tela, por que a senha e um hash, por que a
+      trava do `registrar()` nao vai no construtor e por que a regra do ano
+      fica no model e nao no controller
 
 ---
 
@@ -1507,21 +1705,158 @@ controller.
 
 ---
 
+## Apendice A — Todos os comandos do terminal
+
+Estes sao **todos** os comandos da atividade, na ordem. Nada alem disso e
+digitado no terminal.
+
+**TERMINAL 2** · uma vez, na parte 1, e fica rodando ate o fim da aula
+(para parar: **Ctrl+C**)
+
+```bash
+php -S localhost:8000 roteador.php
+```
+
+**TERMINAL 1** · todos os outros
+
+| Parte | Comando | Para que |
+|---|---|---|
+| 1.3 | `php -v` | conferir a versao do PHP |
+| 1.4 | `php instalar.php` | criar os dois bancos |
+| 2.2 | `php console.php scaffold:crud bibliotecarios nome:string` | gerar o cadastro de bibliotecarios |
+| 3.1 | `php console.php auth:install Bibliotecario` | dar login a tabela de bibliotecarios |
+| 4.3 | `php banco/criar-administrador.php` | cadastrar a Maria (depois de criar o arquivo na 4.2) |
+| 6.1 | `php console.php scaffold:crud livros titulo:string autor:string ano:integer disponivel:boolean --auth=bibliotecario` | gerar o cadastro de livros ja protegido |
+| 6.2 | `php console.php scaffold:pesquisa livros titulo autor disponivel` | acrescentar a pesquisa em livros |
+| 8 e 9 | `php testes/executar.php` | rodar todos os testes |
+| 8.3 e 8.4 | `php testes/executar.php Bibliotecario` | rodar so os testes de bibliotecario |
+| 8.5 | `php testes/executar.php Livro` | rodar so os testes de livro |
+
+O mesmo, em sequencia, para copiar:
+
+```bash
+php -v
+php instalar.php
+php console.php scaffold:crud bibliotecarios nome:string
+php console.php auth:install Bibliotecario
+php banco/criar-administrador.php
+php console.php scaffold:crud livros titulo:string autor:string ano:integer disponivel:boolean --auth=bibliotecario
+php console.php scaffold:pesquisa livros titulo autor disponivel
+php testes/executar.php
+```
+
+> Nao rode esta lista de uma vez: entre um comando e outro ha codigo para
+> escrever. Ela serve para conferir se voce nao pulou nenhum.
+
+---
+
+## Apendice B — Todo o codigo que voce escreve
+
+Estes sao **todos** os arquivos que voce abre no editor, na ordem. O codigo
+completo de cada mudanca esta na parte indicada.
+
+| Parte | Arquivo | O que voce faz |
+|---|---|---|
+| 1.4 | `configuracoes/banco.php` | troca os nomes dos dois bancos |
+| 4.2 | `banco/criar-administrador.php` | **cria o arquivo** que cadastra a Maria |
+| 5.2 | `controllers/BibliotecariosController.php` | 1 linha no `__construct()`: `exigirAutenticacao` |
+| 5.3 | `controllers/AuthBibliotecarioController.php` | no `registrar()`: 1 linha no comeco e troca da mensagem e do destino no fim |
+| 5.4 | `views/auth/bibliotecario/login.php` | apaga o link "Criar uma conta" |
+| 5.4 | `views/auth/bibliotecario/registrar.php` | troca o link do fim por "Voltar para a lista" |
+| 5.4 | `views/bibliotecarios/index.php` | o botao vira "Novo bibliotecario", apontando para `registrar` |
+| 5.5 | `configuracoes/menu.php` | `'auth' => 'sim'` em Bibliotecarios |
+| 6.3 | `configuracoes/menu.php` | `'auth' => 'sim'` em Livros |
+| 6.3 | `views/livros/formulario.php`, `index.php`, `ver.php` | rotulos com letra maiuscula |
+| 6.3 | `views/bibliotecarios/index.php`, `ver.php` | rotulo `Nome` |
+| 7.3 | `modelos/Livro.php` | `->obrigatorio('ano')` e a regra `->personalizada(...)` |
+| 8.2 | `testes/controllers/BibliotecariosControllerTest.php` | login no `preparar()` e `'Nome'` no `assertContem` |
+| 8.3 | `testes/controllers/AuthBibliotecarioControllerTest.php` | login no comeco de 3 testes e o destino `'bibliotecarios'` |
+| 8.4 | `testes/controllers/AuthBibliotecarioControllerTest.php` | teste novo `testeVisitanteNaoCadastraBibliotecario` |
+| 8.5 | `testes/modelos/LivroTest.php` | testes novos `testeRecusaAnoNoFuturo` e `testeAceitaOAnoAtual` |
+| 9.1 | `configuracoes/app.php` | nome do sistema |
+| 9.2 | `views/home/index.php` | troca todo o conteudo |
+| 9.3 | `testes/nucleo/RoteamentoTest.php` | texto procurado na pagina inicial |
+
+Todos os outros arquivos do projeto foram **gerados pelos comandos** do
+Apendice A. Voce le alguns deles para entender, mas nao escreve neles.
+
+---
+
+## Apendice C — Outro jeito: cadastrar a Maria pelo phpMyAdmin
+
+Use este caminho **no lugar** das partes 4.2 e 4.3, se o professor preferir
+que a Maria seja cadastrada com SQL. Se voce ja rodou o
+`criar-administrador.php`, **nao** faca este apendice: a Maria ja existe.
+
+**C.1 — Gere o hash da senha.** O banco nao sabe calcular o hash que o PHP usa,
+entao o PHP calcula e voce copia.
+
+**TERMINAL 1**
+
+```bash
+php -r "echo password_hash('biblioteca123', PASSWORD_DEFAULT) . PHP_EOL;"
+```
+
+**Confira:** aparece uma linha parecida com esta (a sua sai **diferente**, e
+esta certo — cada vez o PHP mistura um valor aleatorio, o *sal*):
+
+```text
+$2y$12$eM.x7vAHotRY5lfy7X/2UuRllxZWDu7GWMt8J8mnWHs7/mG6QVYJW
+```
+
+Selecione e copie a linha **inteira** (60 caracteres).
+
+**C.2 — Insira a Maria.**
+
+**NAVEGADOR** · <http://localhost/phpmyadmin>
+
+1. Clique no banco **`minha_biblioteca`**.
+2. Abra a aba **SQL**.
+3. Cole o comando abaixo e troque `COLE_AQUI_O_HASH` pelo **seu** hash:
+
+```sql
+INSERT INTO bibliotecarios (nome, email, senha)
+VALUES ('Maria Souza', 'admin@biblioteca.com', 'COLE_AQUI_O_HASH');
+```
+
+4. Clique em **Executar**.
+
+Tres cuidados:
+
+- o hash fica **entre aspas simples**, como os outros valores;
+- nao pode sobrar **espaco** antes ou depois do hash;
+- se faltar um pedaco do hash, o login falha.
+
+Depois, siga normalmente a partir da **parte 4.4**.
+
+| Problema neste caminho | O que fazer |
+|---|---|
+| erro `#1062` (entrada duplicada) | a Maria ja existe: o e-mail e unico. Nao insira de novo |
+| erro `#1146` (tabela nao existe) | voce clicou em outro banco, ou pulou a parte 2 |
+| "E-mail ou senha invalidos." com os dados certos | o hash foi colado errado. Apague a linha da Maria e repita C.1 e C.2 |
+
+---
+
 ## Socorro rapido
 
 | O que aparece | O que fazer |
 |---|---|
+| `'php' nao e reconhecido como um comando` (Windows) | o PHP do XAMPP nao esta no PATH. Troque `php` por `C:\xampp\php\php.exe` no comando, ou peca ajuda para colocar `C:\xampp\php` no PATH |
+| `Could not open input file: ...` | o terminal nao esta na pasta `minha-biblioteca`, ou o arquivo esta com outro nome/lugar. Abra a pasta certa no VS Code e abra um terminal novo |
 | `[ERRO]` ao rodar `php instalar.php` | MySQL desligado, ou usuario/senha errados em `configuracoes/banco.php` |
-| o phpMyAdmin nao abre | ligue o **Apache** no painel do XAMPP |
+| o TERMINAL 2 "travou" depois do `php -S` | nao travou: o servidor fica rodando assim. Use o TERMINAL 1 para os outros comandos |
+| a pagina nao abre (`localhost:8000`) | o servidor do TERMINAL 2 foi fechado. Rode `php -S localhost:8000 roteador.php` de novo |
 | a pagina abre sem estilo | o servidor foi iniciado sem o roteador: `php -S localhost:8000 roteador.php` |
-| "E-mail ou senha invalidos." com os dados certos da Maria | o hash foi colado errado (pedaco faltando, espaco sobrando). Apague a linha da Maria no phpMyAdmin e repita 4.2 e 4.3 |
-| erro `#1062` (entrada duplicada) ao inserir a Maria | ela ja foi inserida: o e-mail e unico. Nao insira de novo |
-| erro `#1146` (tabela nao existe) ao inserir a Maria | voce esta em outro banco no phpMyAdmin, ou pulou a parte 2 |
+| o phpMyAdmin nao abre | ligue o **Apache** no painel do XAMPP |
+| `Failed opening required ... bootstrap.php` ao rodar o `criar-administrador.php` | o arquivo nao esta dentro da pasta `banco/`. Mova-o para la |
+| `Call to undefined method ... buscarPorEmail()` | a parte 3 (`auth:install Bibliotecario`) nao foi feita |
+| troquei a senha no `criar-administrador.php`, rodei de novo e a senha nova nao entra | o arquivo nao altera quem ja existe ("ja esta cadastrado"). Apague a linha da Maria no phpMyAdmin e rode o arquivo de novo |
 | a tela de login fica pedindo login sem parar | voce colocou `exigirAutenticacao()` no **construtor** do `AuthBibliotecarioController`. Tire de la e deixe so dentro do `registrar()` |
-| o bibliotecario criado em "Novo registro" nao consegue entrar | ele foi criado sem e-mail e senha. Faca o ajuste 5.4 c e cadastre de novo pela tela `registrar` |
+| o bibliotecario criado em "Novo registro" nao consegue entrar | ele foi criado sem e-mail e senha. Faca o ultimo ajuste da 5.4 e cadastre de novo pela tela `registrar` |
 | `--auth=bibliotecario` da erro ao gerar livros | o login ainda nao foi instalado: faca a parte 3 antes |
-| `Esperava 200 mas recebeu 302` nos testes | teste antigo esperando rota publica: veja a parte 8 |
 | erro 500 com `Incorrect integer value` ao salvar livro | o ano ficou em branco e ainda falta o `->obrigatorio('ano')`: veja a parte 7.3 |
 | a regra do ano nao funciona | a regra foi escrita no controller ou fora do `validar()`. Ela vai **dentro** do `validar()` de `modelos/Livro.php`, antes do `->erros();` |
-| `Esperava encontrar "Bem-vindo ao framework MVC"` nos testes | voce trocou a pagina inicial e o teste antigo ainda procura o texto velho: veja a parte 9 |
-| erro de tabela inexistente so nos testes | o banco de testes e recriado a cada execucao; confira o MySQL ligado e o `banco_testes` em `configuracoes/banco.php` |
+| `syntax error, unexpected token "->"` em `Livro.php` | sobrou um `;` no meio da corrente de regras. So o `->erros();` do fim tem `;` |
+| `Esperava 200 mas recebeu 302` nos testes | teste antigo esperando rota publica: veja a parte 8 |
+| `Esperava encontrar "nome" no texto` nos testes | voce trocou o rotulo para `Nome` e falta ajustar o teste: veja a parte 8.2 |
+| `Esperava encontrar "Bem-vindo ao framework MVC"` nos testes | voce trocou a pagina inicial e o teste antigo ainda procura o texto velho: veja a parte 9.3 |

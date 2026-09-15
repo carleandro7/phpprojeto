@@ -309,6 +309,17 @@ code {
     font-size: .85rem;
 }
 
+/*
+ * Marca o rotulo de um campo obrigatorio com um * vermelho:
+ *     <label class="form-label obrigatorio" for="nome">nome</label>
+ * O asterisco so avisa quem enxerga: coloque "required" no input tambem.
+ */
+.obrigatorio::after {
+    content: " *";
+    color: var(--cor-erro);
+    font-weight: 600;
+}
+
 .formulario__acoes {
     display: flex;
     gap: .6rem;

@@ -108,6 +108,31 @@ class AutenticavelTest extends TesteBase
         $this->assertIgual(1, $this->modelo->contar());
     }
 
+    /** A validacao do CRUD usa emailEmUso(): na edicao, o proprio registro nao conta. */
+    public function testeConfereEmailEmUso(): void
+    {
+        $id = $this->modelo->criarComSenha(['email' => 'ana@example.com'], 'segredo123');
+
+        $this->assertVerdadeiro($this->modelo->emailEmUso('ana@example.com'));
+        $this->assertVerdadeiro($this->modelo->emailEmUso(' ana@example.com '));
+        $this->assertVerdadeiro($this->modelo->emailEmUso('ana@example.com', $id + 1));
+        $this->assertFalso($this->modelo->emailEmUso('ana@example.com', $id));
+        $this->assertFalso($this->modelo->emailEmUso('outra@example.com'));
+        $this->assertFalso($this->modelo->emailEmUso(''));
+        $this->assertFalso($this->modelo->emailEmUso(null));
+    }
+
+    /** O indice UNIQUE do e-mail aceita varios NULL, mas recusaria dois ''. */
+    public function testeEmailEmBrancoViraNulo(): void
+    {
+        $id = $this->modelo->criar(['nome' => 'Joao', 'email' => '  ', 'senha' => '']);
+
+        $this->assertNulo($this->modelo->buscar($id)['email']);
+
+        $this->modelo->atualizar($id, ['email' => ' joao@example.com ']);
+        $this->assertIgual('joao@example.com', $this->modelo->buscar($id)['email']);
+    }
+
     public function testeCadastroDeContaExigeEmailESenhaValidos(): void
     {
         // Sem e-mail.

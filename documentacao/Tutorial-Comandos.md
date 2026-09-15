@@ -477,7 +477,14 @@ Autenticacao aplicada ao modelo Professor.
   + views/auth/professor/registrar.php
   + testes/controllers/AuthProfessorControllerTest.php
   ~ modelos/Professor.php
+  ~ controllers/ProfessoresController.php
+  ~ views/professores/formulario.php
+  ~ views/professores/ver.php
+  ~ testes/controllers/ProfessoresControllerTest.php
   ~ banco/esquema.sql
+
+O CRUD /professores agora recebe email e senha. Os dois sao opcionais:
+sem eles o registro so ainda nao tem conta.
 
 Login em /auth-professor: prefixo "professor", vindo do modelo Professor.
 Para deixa-lo no login unico /auth: php console.php auth:install Professor auth
@@ -518,7 +525,9 @@ projeto tem uma unica tela de login e voce nao se importa com o endereco,
 - criou um indice UNIQUE em `email`, para nao existirem duas contas com o
   mesmo endereco;
 - acrescentou `use Nucleo\Autenticavel;` ao model e incluiu os dois campos em
-  `$preenchiveis`.
+  `$preenchiveis`;
+- acrescentou ao `validar()` do model as regras de e-mail (valido e sem
+  repetir) e de senha (6+ caracteres).
 
 ```php
 class Professor extends Model
@@ -531,10 +540,21 @@ class Professor extends Model
 }
 ```
 
-O CRUD de professores continua funcionando igual: `POST /professores/salvar`
-grava so o `nome`, e `email`/`senha` ficam `NULL`. Isso e proposital — um
-professor cadastrado pela secretaria ainda nao tem conta. Quem exige
-credenciais e a tela `/auth-professor/registrar`.
+O CRUD de professores tambem foi ajustado para receber os dois campos:
+
+- `controllers/ProfessoresController.php`: o `$dados` do `salvar()` e do
+  `atualizar()` ganhou `'email' => $this->post('email')` e
+  `'senha' => $this->post('senha')`;
+- `views/professores/formulario.php`: ganhou os campos `email` e `senha` (do
+  tipo `password`, que nunca mostra a senha gravada);
+- `views/professores/ver.php`: mostra o `email`;
+- `modelos/Professor.php`: o `validar()` confere se o e-mail e valido e nao
+  pertence a outro professor, e se a senha tem 6+ caracteres.
+
+Os dois campos continuam **opcionais**: um professor cadastrado pela
+secretaria sem e-mail e senha so ainda nao tem conta, e pode criar a sua em
+`/auth-professor/registrar`. Na edicao, deixar a senha em branco mantem a
+senha atual.
 
 ### A senha nunca fica em texto puro
 
@@ -801,13 +821,20 @@ Autenticacao aplicada ao modelo Aluno.
   + views/auth/aluno/registrar.php
   + testes/controllers/AuthAlunoControllerTest.php
   ~ modelos/Aluno.php
+  ~ controllers/AlunosController.php
+  ~ views/alunos/formulario.php
+  ~ testes/controllers/AlunosControllerTest.php
   ~ banco/esquema.sql
+
+O CRUD /alunos agora recebe email e senha. Os dois sao opcionais:
+sem eles o registro so ainda nao tem conta.
 
 Login em /auth-aluno: prefixo "aluno", vindo do modelo Aluno.
 ```
 
 A tabela `alunos` ja tinha `email`, entao o comando so acrescentou `senha` e
-o indice unico. Agora existem dois providers:
+o indice unico. No CRUD, o controller e o formulario ja tinham o e-mail e
+ganharam so a senha. Agora existem dois providers:
 
 | Provider | Controller | Rotas | Sessao |
 |---|---|---|---|

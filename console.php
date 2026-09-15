@@ -1709,12 +1709,23 @@ function gerarAutenticacao(array $argumentos): void
 
     // -------------------------------------------------------------
     // 2. Model: cria do zero ou adiciona o trait ao que ja existe.
+    //    Se o model ja tinha CRUD, ele passa a receber e-mail e senha.
     // -------------------------------------------------------------
     $modeloOriginal = $modelo['novo'] ? null : (string) file_get_contents($modelo['arquivo']);
+    $crud           = null;
+    $crudOriginais  = [];
+    $avisos         = [];
 
     try {
         if (!$modelo['novo']) {
-            tornarModeloAutenticavel($modelo['arquivo']);
+            $avisos = tornarModeloAutenticavel($modelo['arquivo']);
+            $crud   = crudComCredenciais($modelo['classe'], $modelo['tabela'], $avisos);
+
+            foreach (array_keys($crud['arquivos'] ?? []) as $caminho) {
+                $crudOriginais[$caminho] = lerArquivo($caminho);
+            }
+
+            regravarArquivos($crud['arquivos'] ?? []);
         }
 
         $arquivos = [
@@ -1736,7 +1747,8 @@ function gerarAutenticacao(array $argumentos): void
                 $rota,
                 $provider,
                 $temNome,
-                $colunas
+                $colunas,
+                $crud
             ),
         ];
 
@@ -1748,6 +1760,10 @@ function gerarAutenticacao(array $argumentos): void
     } catch (Throwable $e) {
         if ($modeloOriginal !== null) {
             file_put_contents($modelo['arquivo'], $modeloOriginal, LOCK_EX);
+        }
+
+        foreach ($crudOriginais as $caminho => $conteudo) {
+            file_put_contents($caminho, $conteudo, LOCK_EX);
         }
 
         restaurarEsquemas($esquemas);
@@ -1765,7 +1781,20 @@ function gerarAutenticacao(array $argumentos): void
         echo '  ~ ' . caminhoRelativo($modelo['arquivo']) . "\n";
     }
 
+    foreach (array_keys($crudOriginais) as $caminho) {
+        echo '  ~ ' . caminhoRelativo($caminho) . "\n";
+    }
+
     echo '  ~ banco/esquema.sql' . "\n\n";
+
+    if ($crud !== null) {
+        echo "O CRUD /{$crud['pasta']} agora recebe email e senha. Os dois sao opcionais:\n"
+            . "sem eles o registro so ainda nao tem conta.\n\n";
+    }
+
+    foreach ($avisos as $aviso) {
+        echo "AVISO: {$aviso}\n\n";
+    }
 
     if ($provider === Nucleo\Autenticacao::PADRAO) {
         echo "Login em /{$rota}: e o login unico do projeto.\n\n";
@@ -1895,8 +1924,8 @@ function resolverModeloAutenticacao(?string $alvo): array
  * Acrescenta colunas ao CREATE TABLE que ja esta no arquivo de esquema.
  *
  * As colunas entram como NULL de proposito: a tabela pode ja ter registros
- * e o CRUD gerado antes do login continua cadastrando sem e-mail e senha.
- * Quem exige credenciais e o model (criarComSenha) e a tela de cadastro.
+ * e, no CRUD, e-mail e senha sao opcionais (sem eles o registro so ainda nao
+ * tem conta). Quem exige credenciais e a tela de cadastro (criarComSenha).
  */
 function acrescentarColunasAoEsquema(string $tabela, array $colunas): void
 {
@@ -1960,8 +1989,10 @@ function esquemaAutenticacaoPadrao(): string
 /**
  * Acrescenta o trait Autenticavel a um model que ja existe, preservando a
  * indentacao e a ordem dos "use" do arquivo.
+ *
+ * @return list<string> avisos do que precisa ser feito a mao
  */
-function tornarModeloAutenticavel(string $arquivo): void
+function tornarModeloAutenticavel(string $arquivo): array
 {
     $conteudo = file_get_contents($arquivo);
 
@@ -2039,7 +2070,283 @@ function tornarModeloAutenticavel(string $arquivo): void
         );
     }
 
+    // 4. validar() ganha as regras de e-mail e senha usadas pelo CRUD.
+    $avisos    = [];
+    $validacao = validacaoComCredenciais((string) $conteudo);
+
+    if ($validacao === null) {
+        $avisos[] = 'Nao encontrei o validar() com Validador em ' . caminhoRelativo($arquivo) . ".\n"
+            . '       Confira e-mail e senha a mao; emailEmUso() diz se o e-mail ja tem dono.';
+    } else {
+        $conteudo = $validacao;
+    }
+
     file_put_contents($arquivo, (string) $conteudo, LOCK_EX);
+
+    return $avisos;
+}
+
+/**
+ * Acrescenta ao validar() do model as regras de e-mail e senha: e-mail
+ * valido e sem dono, senha com o tamanho minimo. As tres so atuam quando o
+ * campo vem preenchido, entao o CRUD continua aceitando registros sem conta.
+ *
+ * Devolve null quando o model nao tem um validar() terminado em ->erros().
+ */
+function validacaoComCredenciais(string $conteudo): ?string
+{
+    $padrao = '/(public\s+function\s+validar\s*\(([^)]*)\)(?:(?!\bfunction\b).)*?)^([ \t]*)->erros\(\);/ms';
+
+    if (!preg_match($padrao, $conteudo, $encontrado)) {
+        return null;
+    }
+
+    $ignorarId = str_contains($encontrado[2], '$ignorarId') ? '$ignorarId' : 'null';
+    $regras    = [
+        "->email('email'"  => "->email('email')",
+        'emailEmUso('      => "->personalizada('email', !\$this->emailEmUso(\$dados['email'] ?? null, {$ignorarId}), 'Este e-mail ja esta cadastrado.')",
+        "->minimo('senha'" => "->minimo('senha', " . Nucleo\Autenticacao::SENHA_MINIMA . ')',
+    ];
+
+    $novas = '';
+
+    foreach ($regras as $existente => $regra) {
+        if (!str_contains($encontrado[1], $existente)) {
+            $novas .= $encontrado[3] . $regra . "\n";
+        }
+    }
+
+    return (string) preg_replace_callback(
+        $padrao,
+        fn (array $m): string => $m[1] . $novas . $m[3] . '->erros();',
+        $conteudo,
+        1
+    );
+}
+
+/**
+ * Leva e-mail e senha para o CRUD que o scaffold:crud gerou para o model.
+ *
+ * Sem isso o login ficaria instalado, mas o formulario do CRUD nao teria os
+ * campos e o salvar()/atualizar() do controller nunca os gravaria:
+ *
+ *   - o controller passa a receber email e senha nos dois $dados;
+ *   - o formulario ganha os campos (a senha num input password, sem value);
+ *   - a tela ver mostra o e-mail;
+ *   - o teste do controller recria a tabela ja com as colunas novas.
+ *
+ * Nada e gravado aqui: devolve [caminho => conteudo novo] para o chamador
+ * gravar junto com o resto. Devolve null quando o model nao tem CRUD ou o
+ * controller mudou tanto que nao da para alterar (o que fazer vai para $avisos).
+ *
+ * @return array{arquivos:array<string,string>,pasta:string,guarda:string|false,campos:list<array{0:string,1:string}>}|null
+ */
+function crudComCredenciais(string $classe, string $tabela, array &$avisos): ?array
+{
+    $recurso    = pascal($tabela);
+    $pasta      = strtolower($recurso);
+    $controller = CAMINHO_CONTROLLERS . "/{$recurso}Controller.php";
+
+    if (!is_file($controller)) {
+        return null;
+    }
+
+    $conteudo = lerArquivo($controller);
+
+    // Um controller com o mesmo nome, mas de outro model, nao e o CRUD dele.
+    if (!preg_match('/^use\s+Modelos\\\\' . preg_quote($classe, '/') . ';/m', $conteudo)) {
+        return null;
+    }
+
+    $novoController = controllerComCredenciais($conteudo);
+
+    if ($novoController === null) {
+        $avisos[] = 'Nao encontrei o $dados = [...] do salvar()/atualizar() em ' . caminhoRelativo($controller) . ".\n"
+            . "       Inclua a mao: 'email' => \$this->post('email'), 'senha' => \$this->post('senha'),";
+
+        return null;
+    }
+
+    $arquivos = $novoController === $conteudo ? [] : [$controller => $novoController];
+    $alvos    = [
+        CAMINHO_VIEWS . "/{$pasta}/formulario.php" => 'formularioComCredenciais',
+        CAMINHO_VIEWS . "/{$pasta}/ver.php"        => 'verComCredenciais',
+        CAMINHO_RAIZ . "/testes/controllers/{$recurso}ControllerTest.php"
+            => fn (string $texto): ?string => testeComColunasDeCredenciais($texto, $tabela),
+    ];
+
+    foreach ($alvos as $caminho => $alterar) {
+        if (!is_file($caminho)) {
+            continue;
+        }
+
+        $original = lerArquivo($caminho);
+        $novo     = $alterar($original);
+
+        if ($novo === null) {
+            $avisos[] = 'Nao encontrei onde incluir email e senha em ' . caminhoRelativo($caminho) . '. Inclua a mao.';
+        } elseif ($novo !== $original) {
+            $arquivos[$caminho] = $novo;
+        }
+    }
+
+    // O teste gerado pelo auth:install usa estes campos para postar no CRUD.
+    $campos = [];
+
+    foreach (colunasDoEsquema($tabela) as $nome => [$tipo]) {
+        if (!in_array($nome, ['id', 'email', 'senha', 'criado_em'], true)) {
+            $campos[] = [$nome, $tipo];
+        }
+    }
+
+    preg_match('/exigirAutenticacao\(\s*(?:\'([a-z0-9_]*)\')?\s*\)/', $conteudo, $guarda);
+
+    return [
+        'arquivos' => $arquivos,
+        'pasta'    => $pasta,
+        'guarda'   => $guarda === [] ? false : ($guarda[1] ?? ''),
+        'campos'   => $campos,
+    ];
+}
+
+/**
+ * Os "$dados = [...]" do salvar() e do atualizar() ganham email e senha.
+ * Devolve null se o controller nao tiver nenhum desses blocos.
+ */
+function controllerComCredenciais(string $conteudo): ?string
+{
+    $blocos = 0;
+
+    $novo = preg_replace_callback(
+        '/^([ \t]*)\$dados = \[\R((?:[ \t]+.*\$this->post\(.*\R)+)\1\];/m',
+        function (array $m) use (&$blocos): string {
+            $blocos++;
+
+            $linhas = $m[2];
+            $recuo  = preg_match('/^[ \t]+/', $linhas, $r) ? $r[0] : $m[1] . '    ';
+
+            foreach (['email', 'senha'] as $campo) {
+                if (!preg_match("/['\"]{$campo}['\"]\s*=>/", $linhas)) {
+                    $linhas .= "{$recuo}'{$campo}' => \$this->post('{$campo}'),\n";
+                }
+            }
+
+            return $m[1] . "\$dados = [\n" . $linhas . $m[1] . '];';
+        },
+        $conteudo
+    );
+
+    return $blocos > 0 ? (string) $novo : null;
+}
+
+/**
+ * O formulario ganha os campos que ainda nao tem, logo antes dos botoes.
+ * Devolve null se nao achar o fim da grade de campos.
+ */
+function formularioComCredenciais(string $conteudo): ?string
+{
+    $campos = (str_contains($conteudo, 'name="email"') ? '' : campoEmail())
+        . (str_contains($conteudo, 'name="senha"') ? '' : campoSenha());
+
+    if ($campos === '') {
+        return $conteudo;
+    }
+
+    $padrao = '/^[ \t]*<\/div>\R[ \t]*<div class="d-flex gap-2 mt-4">/m';
+
+    if (!preg_match($padrao, $conteudo)) {
+        return null;
+    }
+
+    return (string) preg_replace_callback($padrao, fn (array $m): string => $campos . $m[0], $conteudo, 1);
+}
+
+function campoEmail(): string
+{
+    return <<<'HTML'
+            <div class="col-md-6">
+                <label class="form-label" for="email">email</label>
+                <input class="form-control <?= tem_erro('email') ? 'is-invalid' : '' ?>" id="email" type="email" name="email" value="<?= e(antigo('email', $registro['email'] ?? '')) ?>">
+                <?php if ($mensagem = erro_de('email')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+            </div>
+
+        HTML;
+}
+
+/**
+ * A senha nunca volta para a tela: o input nao tem value. Em branco na
+ * edicao, o trait Autenticavel mantem a senha atual.
+ */
+function campoSenha(): string
+{
+    return strtr(<<<'HTML'
+            <div class="col-md-6">
+                <label class="form-label" for="senha">senha</label>
+                <input class="form-control <?= tem_erro('senha') ? 'is-invalid' : '' ?>" id="senha" type="password" name="senha" autocomplete="new-password" minlength="{{SENHA_MINIMA}}">
+                <?php if ($registro): ?><div class="form-text">Deixe em branco para manter a senha atual.</div><?php endif ?>
+                <?php if ($mensagem = erro_de('senha')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+            </div>
+
+        HTML, ['{{SENHA_MINIMA}}' => (string) Nucleo\Autenticacao::SENHA_MINIMA]);
+}
+
+/** A tela ver mostra o e-mail (a senha, nunca). */
+function verComCredenciais(string $conteudo): ?string
+{
+    if (str_contains($conteudo, "\$registro['email']")) {
+        return $conteudo;
+    }
+
+    if (!preg_match('/^([ \t]*)<\/dl>/m', $conteudo, $fim)) {
+        return null;
+    }
+
+    $recuo = preg_match('/^([ \t]*)<dt\b/m', $conteudo, $dt) ? $dt[1] : $fim[1] . '    ';
+    $linha = "{$recuo}<dt class=\"col-sm-3\">email</dt>\n"
+        . "{$recuo}<dd class=\"col-sm-9\"><?= e(\$registro['email'] ?? '') ?></dd>\n";
+
+    return (string) preg_replace_callback('/^[ \t]*<\/dl>/m', fn (array $m): string => $linha . $m[0], $conteudo, 1);
+}
+
+/**
+ * O teste do controller recria a tabela com as colunas da epoca do
+ * scaffold. Como o salvar() agora grava o e-mail, ela precisa das colunas
+ * novas. Devolve null se nao achar o CREATE TABLE da tabela.
+ */
+function testeComColunasDeCredenciais(string $conteudo, string $tabela): ?string
+{
+    $nome   = preg_quote($tabela, '/');
+    $padrao = "/('{$nome}'\s*=>\s*\"CREATE TABLE {$nome} \(\R)(.*?)(\R[ \t]*\)\",)/s";
+
+    if (!preg_match($padrao, $conteudo)) {
+        return null;
+    }
+
+    return (string) preg_replace_callback($padrao, function (array $m): string {
+        $recuo      = preg_match('/^[ \t]*/', $m[2], $r) ? $r[0] : '';
+        $definicoes = array_map('trim', explode(",\n", str_replace("\r\n", "\n", $m[2])));
+        $restricao  = null;
+
+        foreach ($definicoes as $indice => $definicao) {
+            if (preg_match('/^CONSTRAINT\b/i', $definicao)) {
+                $restricao = $indice;
+                break;
+            }
+        }
+
+        $novas = [];
+
+        foreach (['email', 'senha'] as $coluna) {
+            if (preg_grep('/^' . $coluna . '\b/i', $definicoes) === []) {
+                $novas[] = "{$coluna} VARCHAR(255) NULL";
+            }
+        }
+
+        // Coluna nunca depois de CONSTRAINT, como em acrescentarColunasAoEsquema().
+        array_splice($definicoes, $restricao ?? count($definicoes), 0, $novas);
+
+        return $m[1] . $recuo . implode(",\n{$recuo}", $definicoes) . $m[3];
+    }, $conteudo, 1);
 }
 
 function modeloAutenticavelGerado(string $classe, string $tabela): string
@@ -2270,7 +2577,8 @@ function testeAutenticacaoGerado(
     string $rota,
     string $provider,
     bool $temNome,
-    array $colunas
+    array $colunas,
+    ?array $crud = null
 ): string {
     $definicoes = implode(",\n                        ", array_map(
         fn (string $coluna): string => "{$coluna} TEXT NULL",
@@ -2278,6 +2586,7 @@ function testeAutenticacaoGerado(
     ));
 
     $argumentoProvider = $provider === '' ? '' : "'{$provider}'";
+    $testeCrud         = $crud === null ? '' : testeCrudComCredenciais($crud, $rota, $argumentoProvider);
 
     return strtr(<<<'PHP'
         <?php
@@ -2389,7 +2698,7 @@ function testeAutenticacaoGerado(
 
                 $this->assertVerdadeiro($login->foiRedirecionado());
                 $this->assertFalso(autenticado({{PROVIDER}}));
-            }
+            }{{TESTE_CRUD}}
         }
         PHP, [
         '{{CLASSE}}'      => $classe,
@@ -2399,6 +2708,84 @@ function testeAutenticacaoGerado(
         '{{ROTA}}'        => $rota,
         '{{PROVIDER}}'    => $argumentoProvider,
         '{{DADO_NOME}}'   => $temNome ? "\n            'nome'  => 'Ana'," : '',
+        '{{TESTE_CRUD}}'  => $testeCrud,
+    ]);
+}
+
+/**
+ * Teste gerado quando o model ja tinha CRUD: o formulario do CRUD grava
+ * e-mail e senha (com hash), senha em branco na edicao mantem a atual,
+ * e-mail repetido volta para o formulario e a conta criada ali entra.
+ */
+function testeCrudComCredenciais(array $crud, string $rota, string $argumentoProvider): string
+{
+    $entrar = $crud['guarda'] === false
+        ? ''
+        : '        Sessao::definir(Sessao::chaveAutenticacao(\Nucleo\Autenticacao::resolver('
+            . ($crud['guarda'] === '' ? '' : "'{$crud['guarda']}'") . ")), 1);\n\n";
+
+    $dados = function (string $senha) use ($crud): string {
+        $linhas = [];
+
+        foreach ($crud['campos'] as [$nome, $tipo]) {
+            $linhas[] = "            '{$nome}' => " . var_export(valorTeste($tipo, false, $nome), true) . ',';
+        }
+
+        $linhas[] = "            'email' => 'bia@example.com',";
+        $linhas[] = "            'senha' => " . var_export($senha, true) . ',';
+
+        return implode("\n", $linhas);
+    };
+
+    return strtr(<<<'PHP'
+
+
+            /**
+             * O CRUD /{{PASTA}} tambem recebe e-mail e senha: grava o hash,
+             * mantem a senha quando o campo vem em branco, recusa e-mail
+             * repetido, e a conta cadastrada ali consegue entrar.
+             */
+            public function testeCrudGravaEmailESenha(): void
+            {
+        {{ENTRAR}}        $salvar = $this->postar('{{PASTA}}/salvar', [
+        {{DADOS_SALVAR}}
+                ]);
+
+                $registro = $this->modelo->buscarPorEmail('bia@example.com');
+                $this->assertNaoNulo($registro, 'O salvar() do CRUD deve gravar o e-mail');
+                $this->assertVerdadeiro($salvar->redirecionouPara('{{PASTA}}/ver/' . $registro['id']));
+                $this->assertDiferente('segredo123', $registro['senha']);
+                $this->assertVerdadeiro(password_verify('segredo123', (string) $registro['senha']));
+
+                $atualizar = $this->postar('{{PASTA}}/atualizar/' . $registro['id'], [
+        {{DADOS_ATUALIZAR}}
+                ]);
+                $this->assertVerdadeiro($atualizar->redirecionouPara('{{PASTA}}/ver/' . $registro['id']));
+                $this->assertIgual($registro['senha'], $this->modelo->buscar($registro['id'])['senha']);
+
+                $repetido = $this->postar('{{PASTA}}/salvar', [
+        {{DADOS_REPETIDO}}
+                ]);
+                $this->assertVerdadeiro($repetido->redirecionouPara('{{PASTA}}/criar'));
+                $this->assertIgual(1, $this->modelo->contar());
+
+                $this->limparSessao();
+
+                $login = $this->postar('{{ROTA}}/login', [
+                    'email' => 'bia@example.com',
+                    'senha' => 'segredo123',
+                ]);
+                $this->assertVerdadeiro($login->foiRedirecionado());
+                $this->assertVerdadeiro(autenticado({{PROVIDER}}));
+            }
+        PHP, [
+        '{{PASTA}}'           => $crud['pasta'],
+        '{{ROTA}}'            => $rota,
+        '{{PROVIDER}}'        => $argumentoProvider,
+        '{{ENTRAR}}'          => $entrar,
+        '{{DADOS_SALVAR}}'    => $dados('segredo123'),
+        '{{DADOS_ATUALIZAR}}' => $dados(''),
+        '{{DADOS_REPETIDO}}'  => $dados('outrasenha'),
     ]);
 }
 

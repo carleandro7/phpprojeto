@@ -36,7 +36,9 @@ use InvalidArgumentException;
  *   - senha que ja e um hash (um seed, uma copia de outro registro)
  *     -> passa direto, sem hash duplo;
  *   - nenhum campo "senha" no array
- *     -> o CRUD comum funciona normalmente, sem exigir credenciais.
+ *     -> o CRUD comum funciona normalmente, sem exigir credenciais;
+ *   - e-mail em branco
+ *     -> vira NULL, que o indice UNIQUE da coluna aceita repetido.
  */
 trait Autenticavel
 {
@@ -71,12 +73,12 @@ trait Autenticavel
 
     public function criar(array $dados): int
     {
-        return parent::criar($this->protegerSenha($dados));
+        return parent::criar($this->protegerSenha($this->normalizarEmail($dados)));
     }
 
     public function atualizar(int|string $id, array $dados): bool
     {
-        return parent::atualizar($id, $this->protegerSenha($dados));
+        return parent::atualizar($id, $this->protegerSenha($this->normalizarEmail($dados)));
     }
 
     /**
@@ -104,8 +106,43 @@ trait Autenticavel
     }
 
     // ------------------------------------------------------------------
+    // Validacao
+    // ------------------------------------------------------------------
+
+    /**
+     * O e-mail ja pertence a outro registro?
+     *
+     * Usado no validar() do CRUD. Na edicao, passe o id do proprio registro
+     * em $ignorarId: sem isso, salvar sem mudar o e-mail acusaria repeticao.
+     */
+    public function emailEmUso(mixed $email, int|string|null $ignorarId = null): bool
+    {
+        if (!is_scalar($email) || trim((string) $email) === '') {
+            return false;
+        }
+
+        $registro = $this->buscarPorEmail((string) $email);
+
+        return $registro !== null && (string) $registro[$this->chavePrimaria] !== (string) $ignorarId;
+    }
+
+    // ------------------------------------------------------------------
     // Apoio interno
     // ------------------------------------------------------------------
+
+    /**
+     * E-mail em branco vira NULL. A coluna tem indice UNIQUE: varios NULL
+     * convivem, mas o segundo registro com '' seria recusado pelo banco.
+     */
+    private function normalizarEmail(array $dados): array
+    {
+        if (array_key_exists('email', $dados) && is_scalar($dados['email'])) {
+            $email          = trim((string) $dados['email']);
+            $dados['email'] = $email === '' ? null : $email;
+        }
+
+        return $dados;
+    }
 
     /**
      * Garante que o que for gravado na coluna "senha" seja sempre um hash.

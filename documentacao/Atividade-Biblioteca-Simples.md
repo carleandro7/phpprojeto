@@ -283,9 +283,9 @@ voce resolve na parte 5.
 
 **Confira:** a lista aparece vazia.
 
-> **Nao cadastre ninguem por essa tela.** O formulario dela so tem o campo
-> `nome`: um bibliotecario criado ali fica sem e-mail e sem senha, e nunca
-> vai conseguir entrar.
+> **Nao cadastre ninguem por essa tela.** Por enquanto o formulario dela so
+> tem o campo `nome`: um bibliotecario criado ali fica sem e-mail e sem
+> senha, e nao consegue entrar. Os dois campos chegam na parte 3.
 
 ---
 
@@ -308,7 +308,14 @@ Autenticacao aplicada ao modelo Bibliotecario.
   + views/auth/bibliotecario/registrar.php
   + testes/controllers/AuthBibliotecarioControllerTest.php
   ~ modelos/Bibliotecario.php
+  ~ controllers/BibliotecariosController.php
+  ~ views/bibliotecarios/formulario.php
+  ~ views/bibliotecarios/ver.php
+  ~ testes/controllers/BibliotecariosControllerTest.php
   ~ banco/esquema.sql
+
+O CRUD /bibliotecarios agora recebe email e senha. Os dois sao opcionais:
+sem eles o registro so ainda nao tem conta.
 
 Login em /auth-bibliotecario: prefixo "bibliotecario", vindo do modelo Bibliotecario.
 Para deixa-lo no login unico /auth: php console.php auth:install Bibliotecario auth
@@ -352,6 +359,13 @@ class Bibliotecario extends Model
     // ...
 }
 ```
+
+**No CRUD**, o console tambem levou os dois campos para `/bibliotecarios`: o
+`salvar()` e o `atualizar()` do controller passaram a receber `email` e
+`senha`, o formulario ganhou os dois campos (a senha num campo `password`,
+que nunca mostra a senha gravada) e o `validar()` do model confere se o
+e-mail e valido e nao se repete. Os dois continuam opcionais — na parte 5
+voce ve por que o cadastro da equipe usa outra tela.
 
 `use Autenticavel;` e um **trait**: um pacote de metodos que o model passa a
 ter, sem voce escrever. Os que importam hoje:
@@ -733,10 +747,13 @@ o botao "Novo registro"
 +        <a class="btn btn-primary" href="<?= url('auth-bibliotecario/registrar') ?>">Novo bibliotecario</a>
 ```
 
-**Entenda o ultimo ajuste:** lembra do aviso da parte 2? O formulario de
-`/bibliotecarios/criar` so pede o `nome`. A tela `registrar` pede nome,
-e-mail e senha, e grava a senha em hash com `criarComSenha()`. E a unica que
-cria um bibliotecario capaz de entrar.
+**Entenda o ultimo ajuste:** desde a parte 3, o formulario de
+`/bibliotecarios/criar` tambem tem e-mail e senha, mas os dois sao
+**opcionais** — da para salvar so o nome, e esse bibliotecario nao entra. A
+tela `registrar` **exige** nome, e-mail e senha, e grava a senha em hash com
+`criarComSenha()`. Para cadastrar alguem da equipe, use a tela que garante
+uma conta capaz de entrar. O formulario do CRUD continua util para
+**editar**: corrigir o nome, trocar o e-mail ou definir uma senha nova.
 
 ### 5.5 Esconda o item do menu
 

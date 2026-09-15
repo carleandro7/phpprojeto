@@ -392,12 +392,24 @@ O comando:
   e-mail;
 - adiciona `use Nucleo\Autenticavel;` ao model, preservando a formatacao do
   arquivo, e inclui os campos em `$preenchiveis`;
-- gera o controller, as telas de login/cadastro e um teste de integracao.
+- acrescenta ao `validar()` do model as regras de e-mail (valido e sem
+  repetir, com `emailEmUso()`) e de senha (6+ caracteres);
+- se o model ja tem CRUD, leva `email` e `senha` para ele: o `salvar()` e o
+  `atualizar()` do controller recebem os dois campos, o formulario ganha os
+  inputs (a senha em `type="password"`, sem mostrar a gravada), a tela `ver`
+  mostra o e-mail e o teste do controller recria a tabela com as colunas
+  novas;
+- gera o controller, as telas de login/cadastro e um teste de integracao
+  (que tambem cadastra pelo CRUD, quando ele existe).
 
 Gera ou atualiza (exemplo de `auth:install Cliente`):
 
 ```text
 modelos/Cliente.php                              (atualizado)
+controllers/ClientesController.php               (atualizado, se o CRUD existir)
+views/clientes/formulario.php                    (atualizado, se o CRUD existir)
+views/clientes/ver.php                           (atualizado, se o CRUD existir)
+testes/controllers/ClientesControllerTest.php    (atualizado, se o CRUD existir)
 controllers/AuthClienteController.php
 views/auth/cliente/login.php
 views/auth/cliente/registrar.php
@@ -438,14 +450,16 @@ O trait `Nucleo\Autenticavel` intercepta a escrita no model:
 | `criarComSenha($dados, $senha)` | exige e-mail valido e senha com 6+ caracteres |
 | `criar(['nome' => 'Joao'])` | funciona: o CRUD comum nao precisa de credenciais |
 | `trocarSenha($id, 'novasenha')` | valida e grava o hash |
+| `emailEmUso($email, $ignorarId)` | diz se outro registro ja usa o e-mail (o `validar()` do CRUD usa) |
 
 `autenticar($email, $senha)` confere com `password_verify()` e devolve o
 registro ou `null`.
 
-Isso significa que o CRUD gerado antes do `auth:install` continua funcionando
-depois dele: `salvar()` grava `nome` e `telefone` sem exigir e-mail e senha.
-As colunas `email` e `senha` sao adicionadas como `NULL` justamente por isso —
-quem exige credenciais e a tela de cadastro, nao a tabela.
+O CRUD gerado antes do `auth:install` passa a receber `email` e `senha`, mas
+os dois continuam opcionais: `salvar()` ainda aceita so `nome` e `telefone`.
+As colunas sao adicionadas como `NULL` justamente por isso — quem exige
+credenciais e a tela de cadastro, nao a tabela. E-mail em branco e gravado
+como `NULL`: o indice UNIQUE aceita varios `NULL`, mas nao dois textos vazios.
 
 Para o model `Usuario` criado do zero, as colunas nascem `NOT NULL` com
 `UNIQUE` no e-mail, porque a unica porta de entrada e a tela de cadastro.

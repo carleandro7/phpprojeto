@@ -133,10 +133,15 @@ trait `Nucleo\Autenticavel` ao model e gera as telas, as rotas
 As telas de entrar e criar conta usam `views/template/layout-login.php` — uma
 pagina isolada, sem o menu lateral do sistema.
 
+Se o model ja tinha CRUD, o comando tambem leva `email` e `senha` para ele: o
+formulario ganha os dois campos, o `salvar()`/`atualizar()` do controller
+passa a recebe-los e o `validar()` do model confere e-mail valido e sem
+repetir e senha com 6+ caracteres. Os dois continuam opcionais (um registro
+sem eles so ainda nao tem conta), e senha em branco na edicao mantem a atual.
+
 As senhas nunca vao para o banco em texto puro: o trait aplica
 `password_hash()` em `criar()`, `atualizar()` e `criarComSenha()`, e o login
-confere com `password_verify()`. O CRUD comum do model continua funcionando
-sem informar credenciais.
+confere com `password_verify()`.
 
 ### Varios logins (providers)
 

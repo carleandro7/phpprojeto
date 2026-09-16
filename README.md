@@ -15,6 +15,8 @@ php instalar.php
 php console.php auth:install
 php console.php scaffold:crud produtos nome:string preco:decimal estoque:integer --auth
 php console.php scaffold:pesquisa produtos nome preco
+php console.php scaffold:paginacao produtos
+php console.php db:semear produtos 50   # atalho; os dados do sistema vao em banco/semear.php
 php -S localhost:8000 roteador.php
 ```
 
@@ -33,7 +35,7 @@ php console.php scaffold:crud tabela campo:tipo campo2:tipo [opcoes]
 ```
 
 Tipos aceitos: `string`, `text`, `integer`, `decimal`, `boolean`, `date`,
-`datetime` e `time`. O comando gera modelo (com regras de validacao),
+`datetime`, `time`, `arquivo` e `imagem`. O comando gera modelo (com regras de validacao),
 controller, views, testes de model e de controller, e a tabela em
 `banco/esquema.sql`. Ele nao sobrescreve arquivos existentes.
 
@@ -72,6 +74,48 @@ php console.php scaffold:crud matriculas nome:string turma_id:belongs_to=turmas
 
 A tabela pai precisa existir antes; o comando recusa a relacao caso contrario.
 
+### Acrescentar um campo depois
+
+```bash
+php console.php scaffold:campo produtos peso:decimal disponivel:boolean
+```
+
+O `scaffold:crud` nao sobrescreve arquivos, entao ele nao serve para mexer num
+recurso que ja existe. O `scaffold:campo` faz isso sem apagar o que voce
+escreveu: model, controller, as tres views, os dois testes, `banco/esquema.sql`
+e a tabela no banco.
+
+O resultado e igual ao que o `scaffold:crud` teria gerado com o campo desde o
+comeco — os dois caminhos abaixo produzem arquivos identicos:
+
+```bash
+php console.php scaffold:crud produtos nome:string preco:decimal peso:decimal
+
+php console.php scaffold:crud produtos nome:string preco:decimal
+php console.php scaffold:campo produtos peso:decimal
+```
+
+Vale para relacao tambem, com chave estrangeira, `<select>` no formulario e
+tabela pai dentro do teste:
+
+```bash
+php console.php scaffold:campo produtos categoria_id:belongs_to=categorias
+```
+
+| Opcao | O que faz |
+|---|---|
+| `--obrigatorio` | o campo nasce com `->obrigatorio()` no `validar()` |
+| `--remover` | tira o campo do CRUD e **apaga a coluna do banco** |
+| `--forcar` | com `--remover`, nao pergunta antes de apagar |
+
+```bash
+php console.php scaffold:campo produtos peso --remover
+```
+
+Como o `--remover` apaga dados, ele pergunta antes de continuar. A ida e a
+volta devolvem os arquivos exatamente ao estado anterior. O primeiro campo do
+recurso nao sai: e dele que saem a regra obrigatoria e as asercoes dos testes.
+
 ### Pesquisa na listagem
 
 ```bash
@@ -108,6 +152,141 @@ novo troca esse trecho em vez de empilhar um segundo formulario, e o
 
 ```bash
 php console.php scaffold:pesquisa produtos --remover
+```
+
+### Paginacao na listagem
+
+```bash
+php console.php scaffold:paginacao produtos --por-pagina=15
+```
+
+A listagem gerada traz a tabela inteira — com trinta mil registros, a tela nao
+abre. O comando quebra a listagem em paginas, cortando no banco com `LIMIT`, e
+poe a barra de navegacao embaixo da tabela (`/produtos?pagina=3`).
+
+Ele se encaixa com a pesquisa **em qualquer ordem**. Com as duas instaladas, o
+total de paginas sai do resultado do filtro, e trocar de pagina nao perde o que
+foi digitado.
+
+Os metodos ficam disponiveis em qualquer model, com ou sem o comando:
+
+```php
+$pagina = $this->modelo->paginar($this->get('pagina'), 20);
+$pagina = $this->modelo->paginarConsulta($sql, $parametros, $this->get('pagina'), 20);
+
+$pagina->registros   $pagina->total   $pagina->paginas()   $pagina->resumo()
+```
+
+Na view: `<?= paginacao($pagina ?? null) ?>`.
+
+`?pagina=abc` vira a pagina 1, pedir a pagina 90 de uma lista com 4 devolve a
+ultima, e o tamanho da pagina tem teto — nenhum deles quebra a tela.
+
+Para desfazer: `php console.php scaffold:paginacao produtos --remover`.
+
+### Dados iniciais (semeadura)
+
+```bash
+php console.php db:semear
+```
+
+Os dados ficam em **`banco/semear.php`**, um arquivo PHP do projeto: voce
+escreve, o comando cria. E onde moram as categorias do catalogo, os status de
+um pedido, a conta de administrador. Como e um arquivo versionado, quem clonar
+o repositorio roda um comando e tem o mesmo banco que voce.
+
+```php
+<?php
+
+$categorias = semear('categorias', [
+    ['nome' => 'Eletronicos'],
+    ['nome' => 'Moveis'],
+], 'nome');
+
+semear('produtos', [
+    ['nome' => 'Teclado', 'preco' => 149.90, 'categoria_id' => $categorias['Eletronicos']],
+    ['nome' => 'Mesa',    'preco' => 450.00, 'categoria_id' => $categorias['Moveis']],
+]);
+
+semear('usuarios', [
+    ['nome' => 'Administrador', 'email' => 'admin@example.com', 'senha' => 'segredo123'],
+], 'email');
+
+falsos('produtos', 50);
+```
+
+As tres funcoes disponiveis dentro dele:
+
+| Funcao | O que faz |
+|---|---|
+| `semear('tabela', [...])` | cria os registros e devolve os ids |
+| `semear('tabela', [...], 'coluna')` | pula quem ja existe e devolve os ids indexados por ela |
+| `falsos('tabela', 50)` | enche com dados inventados, para a tela nao ficar vazia |
+| `limpar()` / `limpar('produtos')` | apaga antes de comecar |
+
+O terceiro argumento do `semear()` e o que deixa **rodar o comando quantas
+vezes quiser sem duplicar** — e o id volta assim mesmo, entao as relacoes
+continuam funcionando. Sem ele, rodar duas vezes cria tudo de novo (como o
+`db/seeds.rb` do Rails); para recomecar, `php console.php db:semear --limpar`.
+
+O arquivo inteiro roda dentro de uma transacao: um erro na linha 40 nao deixa
+metade gravada. E uma coluna chamada `senha` recebe `password_hash()` sozinha,
+entao a conta semeada entra pela tela de login.
+
+O `falsos()` inventa os valores a partir do nome e do tipo de cada coluna:
+`preco` vira dinheiro, `email` vira e-mail sempre diferente, `telefone` sai no
+formato brasileiro, `categoria_id` sorteia uma categoria que existe. O `nome`
+de uma tabela de gente recebe nome de pessoa; nas outras vira `Produto 1`,
+`Categoria 2` — que se le bem dentro de um `<select>`.
+
+Para encher uma tela depressa sem abrir o arquivo, ha o atalho:
+
+```bash
+php console.php db:semear produtos 30
+php console.php db:semear --tudo 20 --limpar
+```
+
+E `--semente=7` repete sempre os mesmos dados, util quando a turma inteira
+precisa ver a mesma tela.
+
+### Arquivos e imagens
+
+```bash
+php console.php scaffold:crud produtos nome:string foto:imagem ficha:arquivo
+php console.php scaffold:campo produtos foto:imagem
+```
+
+| Tipo | Aceita | Na tela |
+|---|---|---|
+| `imagem` | jpg, jpeg, png, gif, webp | miniatura clicavel |
+| `arquivo` | pdf, doc(x), xls(x), odt, ods, csv, txt, zip | link "abrir" |
+
+A coluna guarda o **caminho**; o arquivo vai para `views/uploads/`, com nome
+sorteado. O formulario ganha o `enctype` (sem ele nada chega ao servidor), e o
+controller ganha o tratamento inteiro: campo em branco mantem o arquivo atual,
+arquivo novo apaga o anterior do disco, e excluir o registro apaga os arquivos
+dele.
+
+Receber arquivo e a porta de entrada mais perigosa de um site, entao
+`Nucleo\Arquivo` exige tres coisas:
+
+- **veio mesmo de um upload** (`is_uploaded_file`), e nao de um caminho
+  qualquer do servidor;
+- **a extensao esta em uma lista fechada** — o tipo informado pelo navegador e
+  escrito pelo proprio navegador. Em campo `imagem` o conteudo ainda passa por
+  `getimagesize()`, entao um `.php` renomeado para `.jpg` e recusado;
+- **o nome gravado e sorteado**, nunca o que veio junto: `../../index.php`
+  sairia da pasta de uploads.
+
+Alem disso, o `.htaccess` de `views/uploads/` e o roteador recusam qualquer
+`.php` — um executavel que escapasse da lista ainda assim nao rodaria.
+
+Fora do scaffold:
+
+```php
+$foto = $this->imagem('foto', 1024);   // so imagem, ate 1 MB
+$foto->problema();                     // o que esta errado, ou null
+$dados['foto'] = $foto->salvar('produtos');
 ```
 
 ### Autenticacao
@@ -159,6 +338,50 @@ nas views, `autenticado('professor')` e `usuario_id('professor')`.
 vale so na acao onde estiver escrita. Para proteger o controller inteiro,
 chame-a no construtor.
 
+### Perfis de acesso
+
+```bash
+php console.php auth:perfis admin,coordenador,professor
+```
+
+`exigirAutenticacao()` responde "quem e voce?"; perfil responde "voce pode?".
+Sao perguntas diferentes: o aluno e o coordenador estao os dois logados, e so
+um deles pode apagar uma turma.
+
+O comando escreve a lista em `configuracoes/perfis.php`, cria a coluna
+`perfil` na tabela das contas e, quando o model tem CRUD, poe a lista como
+`<select>` no formulario e a coluna na listagem.
+
+```php
+$this->exigirPerfil('admin');                  // so admin
+$this->exigirPerfil(['admin', 'coordenador']); // qualquer um dos dois
+$this->exigirPerfil('admin', 'professor');     // no login /auth-professor
+```
+
+Ela ja chama `exigirAutenticacao()` antes, entao quem nem entrou vai para o
+login — e nao para a mensagem de "sem permissao".
+
+Nas views e no menu:
+
+```php
+<?php if (tem_perfil('admin')): ?> ... <?php endif ?>
+
+['rota' => 'usuarios', 'texto' => 'Usuarios', 'perfil' => 'admin'],
+```
+
+Esconder o item e cortesia com quem usa, **nao seguranca**: quem protege a
+rota e o `exigirPerfil()` no controller.
+
+O perfil vem do banco a cada requisicao, e nao da sessao — tirar o `admin` de
+alguem vale na hora, sem esperar o proximo login. Depois de rodar o comando
+nenhuma conta tem perfil ainda; defina pelo CRUD ou no banco:
+
+```sql
+UPDATE usuarios SET perfil = 'admin' WHERE id = 1;
+```
+
+Cada tela de login tem a sua lista: `php console.php auth:perfis admin,gerente Cliente`.
+
 ### Relatorio em PDF
 
 ```bash
@@ -177,7 +400,10 @@ string (`?nome=teclado&estoque=1`).
   registros;
 - o login chama `Sessao::regenerar()` para evitar fixacao de sessao;
 - os dados invalidos voltam para o formulario com as mensagens por campo, sem
-  perder o que ja tinha sido digitado.
+  perder o que ja tinha sido digitado;
+- os arquivos enviados passam por uma lista fechada de extensoes, ganham nome
+  sorteado e caem em uma pasta onde nenhum `.php` e executado;
+- `exigirPerfil()` separa "esta logado" de "pode fazer isso".
 
 ## Testes
 

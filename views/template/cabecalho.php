@@ -20,11 +20,20 @@ $itens = array_values(array_filter(
     function (array $item): bool {
         $regra = $item['auth'] ?? null;
 
-        return match ($regra) {
+        $podeVer = match ($regra) {
             'sim' => Autenticacao::conectados() !== [],
             'nao' => Autenticacao::conectados() === [],
             default => true,
         };
+
+        // 'perfil' => 'admin' (ou uma lista) esconde o item de quem nao tem
+        // esse perfil. E so o menu: quem protege a rota e o exigirPerfil()
+        // no controller.
+        if ($podeVer && isset($item['perfil'])) {
+            $podeVer = tem_perfil($item['perfil'], $item['provider'] ?? null);
+        }
+
+        return $podeVer;
     }
 ));
 

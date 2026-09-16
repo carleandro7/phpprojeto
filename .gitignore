@@ -1,6 +1,11 @@
 # Configuracoes locais de cada desenvolvedor (senha do MySQL, etc.)
 configuracoes/banco.local.php
 
+# Arquivos enviados pelos formularios.
+# A pasta e a protecao dela ficam no git; o que foi enviado, nao.
+views/uploads/*
+!views/uploads/.htaccess
+
 # Sistema operacional / editor
 .DS_Store
 Thumbs.db

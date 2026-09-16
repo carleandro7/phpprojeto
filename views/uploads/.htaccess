@@ -1,0 +1,22 @@
+# Pasta dos arquivos enviados pelos formularios.
+#
+# A classe Nucleo\Arquivo so grava aqui extensoes de uma lista fechada, mas
+# esta e a segunda tranca: mesmo que um arquivo executavel chegasse ao disco,
+# o servidor o entregaria como texto em vez de rodar.
+
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|phps|pht|cgi|pl|py|sh|htaccess)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+
+Options -Indexes -ExecCGI
+AddType text/plain .php .phtml .pl .py .cgi .sh

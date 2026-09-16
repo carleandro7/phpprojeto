@@ -104,6 +104,42 @@ abstract class Controller
         return new Validador($dados ?? $this->todosOsCampos());
     }
 
+    /**
+     * Pega um arquivo enviado pelo formulario.
+     *
+     * Devolve null quando ninguem escolheu arquivo — o caso normal em uma
+     * edicao onde so os outros campos mudaram.
+     *
+     *     $anexo = $this->arquivo('contrato');
+     *
+     *     if ($anexo !== null && ($problema = $anexo->problema()) !== null) {
+     *         $erros['contrato'] = $problema;
+     *     }
+     *
+     *     $dados['contrato'] = $anexo->salvar('contratos');
+     *
+     * O formulario precisa ter enctype="multipart/form-data", senao o
+     * navegador manda so o nome do arquivo e nada chega aqui.
+     */
+    protected function arquivo(
+        string $campo,
+        array $extensoes = Arquivo::DOCUMENTOS,
+        int $maximoKb = Arquivo::MAXIMO_KB
+    ): ?Arquivo {
+        return Arquivo::de($campo, $extensoes, $maximoKb);
+    }
+
+    /**
+     * Igual ao arquivo(), mas so aceita imagem — e confere o conteudo, nao
+     * so a extensao.
+     *
+     *     $foto = $this->imagem('foto');
+     */
+    protected function imagem(string $campo, int $maximoKb = 2048): ?Arquivo
+    {
+        return Arquivo::de($campo, Arquivo::IMAGENS, $maximoKb, true);
+    }
+
     // ------------------------------------------------------------------
     // Saida
     // ------------------------------------------------------------------
@@ -180,6 +216,30 @@ abstract class Controller
 
         $this->mensagem('aviso', 'Entre para continuar.');
         $this->redirecionar(Autenticacao::rotaLogin($provider));
+    }
+
+    /**
+     * Exige que quem esta logado tenha um destes perfis.
+     *
+     *     $this->exigirPerfil('admin');
+     *     $this->exigirPerfil(['admin', 'coordenador']);
+     *
+     * Ela ja chama exigirAutenticacao() antes: quem nem entrou vai para a
+     * tela de login, e nao para a mensagem de "sem permissao".
+     *
+     * Como exigirAutenticacao(), vale so na acao onde estiver escrita. Para
+     * o controller inteiro, chame no construtor.
+     */
+    protected function exigirPerfil(string|array $perfis, ?string $provider = null): void
+    {
+        $this->exigirAutenticacao($provider);
+
+        if (Perfis::tem($perfis, $provider)) {
+            return;
+        }
+
+        $this->mensagem('erro', 'Voce nao tem permissao para acessar esta area.');
+        $this->redirecionar();
     }
 
     /**

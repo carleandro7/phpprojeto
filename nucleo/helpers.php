@@ -209,6 +209,46 @@ if (!function_exists('usuario_id')) {
     }
 }
 
+if (!function_exists('perfil')) {
+    /**
+     * Perfil de quem esta logado, ou null.
+     *
+     *     <?php if (perfil() === 'admin'): ?> ... <?php endif ?>
+     */
+    function perfil(?string $provider = null): ?string
+    {
+        return Nucleo\Perfis::atual($provider);
+    }
+}
+
+if (!function_exists('tem_perfil')) {
+    /**
+     * Quem esta logado tem algum destes perfis?
+     *
+     *     <?php if (tem_perfil('admin')): ?>
+     *         <a href="<?= url('usuarios') ?>">Usuarios</a>
+     *     <?php endif ?>
+     *
+     *     <?php if (tem_perfil(['admin', 'coordenador'])): ?> ... <?php endif ?>
+     *
+     * Esconder o link e cortesia com quem usa, nao seguranca: quem souber o
+     * endereco continua chegando la. Quem protege a rota e o
+     * exigirPerfil() no controller.
+     */
+    function tem_perfil(string|array $perfis, ?string $provider = null): bool
+    {
+        return Nucleo\Perfis::tem($perfis, $provider);
+    }
+}
+
+if (!function_exists('rotulo_perfil')) {
+    /** Nome legivel de um perfil: 'admin' -> 'Administrador'. */
+    function rotulo_perfil(?string $perfil, ?string $provider = null): string
+    {
+        return Nucleo\Perfis::rotulo($perfil, $provider);
+    }
+}
+
 if (!function_exists('data_br')) {
     /**
      * Converte data do banco (2026-08-12 09:30:00) para o formato brasileiro.
@@ -236,6 +276,109 @@ if (!function_exists('moeda_br')) {
     function moeda_br(float|int|string|null $valor): string
     {
         return number_format((float) $valor, 2, ',', '.');
+    }
+}
+
+if (!function_exists('link_arquivo')) {
+    /**
+     * Link para um arquivo enviado pelo formulario.
+     *
+     *     <?= link_arquivo($registro['contrato'] ?? null) ?>
+     *
+     * Campo vazio nao vira link nenhum — e o caso de um registro que ainda
+     * nao recebeu arquivo.
+     */
+    function link_arquivo(?string $caminho, string $texto = 'abrir'): string
+    {
+        if ($caminho === null || trim($caminho) === '') {
+            return '';
+        }
+
+        return '<a href="' . e(asset($caminho)) . '" target="_blank" rel="noopener">' . e($texto) . '</a>';
+    }
+}
+
+if (!function_exists('miniatura')) {
+    /**
+     * Mostra a imagem enviada em tamanho pequeno, dentro de um link para
+     * ela inteira.
+     *
+     *     <?= miniatura($registro['foto'] ?? null) ?>
+     */
+    function miniatura(?string $caminho, int $altura = 40): string
+    {
+        if ($caminho === null || trim($caminho) === '') {
+            return '';
+        }
+
+        $endereco = e(asset($caminho));
+
+        return '<a href="' . $endereco . '" target="_blank" rel="noopener">'
+            . '<img src="' . $endereco . '" alt="" height="' . (int) $altura . '" class="rounded border">'
+            . '</a>';
+    }
+}
+
+if (!function_exists('link_pagina')) {
+    /**
+     * Link para outra pagina da listagem.
+     *
+     * Ele mantem o resto da query string, entao trocar de pagina no meio de
+     * uma pesquisa nao joga fora os filtros que a pessoa digitou.
+     */
+    function link_pagina(int $numero, ?string $rota = null): string
+    {
+        $parametros = $_GET;
+
+        // "url" e a chave que o roteador usa para dizer qual e a rota; ela
+        // nao pode aparecer de novo como parametro no fim do endereco.
+        unset($parametros['url']);
+
+        $parametros['pagina'] = $numero;
+        $rota = $rota ?? trim((string) ($_GET['url'] ?? ''), '/');
+
+        return url($rota) . '?' . http_build_query($parametros);
+    }
+}
+
+if (!function_exists('paginacao')) {
+    /**
+     * Desenha a barra de paginacao embaixo da tabela.
+     *
+     *     <?= paginacao($pagina) ?>
+     *
+     * Com uma pagina so nao sai nada: nao ha para onde navegar.
+     */
+    function paginacao(?Nucleo\Paginacao $pagina, ?string $rota = null): string
+    {
+        if ($pagina === null || $pagina->paginas() <= 1) {
+            return '';
+        }
+
+        $itens = '';
+
+        $item = function (string $texto, ?int $destino, bool $ativo = false) use ($rota): string {
+            if ($destino === null) {
+                return '<li class="page-item disabled"><span class="page-link">' . e($texto) . '</span></li>';
+            }
+
+            return '<li class="page-item' . ($ativo ? ' active' : '') . '">'
+                . '<a class="page-link" href="' . e(link_pagina($destino, $rota)) . '">' . e($texto) . '</a>'
+                . '</li>';
+        };
+
+        $itens .= $item('Anterior', $pagina->temAnterior() ? $pagina->anterior() : null);
+
+        foreach ($pagina->numeros() as $numero) {
+            $itens .= $item((string) $numero, $numero, $numero === $pagina->pagina);
+        }
+
+        $itens .= $item('Proxima', $pagina->temProxima() ? $pagina->proxima() : null);
+
+        return '<nav class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3" aria-label="Paginacao">'
+            . '<span class="text-secondary small">Mostrando ' . e($pagina->resumo()) . '</span>'
+            . '<ul class="pagination pagination-sm mb-0">' . $itens . '</ul>'
+            . '</nav>';
     }
 }
 

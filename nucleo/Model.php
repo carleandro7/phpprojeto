@@ -159,6 +159,81 @@ abstract class Model
     }
 
     // ------------------------------------------------------------------
+    // Paginacao
+    // ------------------------------------------------------------------
+
+    /**
+     * Traz uma pagina da tabela em vez da tabela inteira.
+     *
+     *     $pagina = $this->modelo->paginar($this->get('pagina'), 20);
+     *     $pagina->registros   // so os registros desta pagina
+     */
+    public function paginar(
+        mixed $pagina = 1,
+        int $porPagina = Paginacao::PADRAO,
+        ?string $ordem = null
+    ): Paginacao {
+        $ordem = $ordem ?? $this->ordemPadrao;
+        $sql   = "SELECT * FROM {$this->tabela}";
+
+        if ($ordem !== '') {
+            $sql .= ' ORDER BY ' . $this->validarOrdem($ordem);
+        }
+
+        return $this->paginarConsulta($sql, [], $pagina, $porPagina);
+    }
+
+    /**
+     * Pagina o resultado de um SELECT escrito a mao.
+     *
+     * E o que a listagem usa quando tem pesquisa: ali o WHERE muda a cada
+     * filtro, entao a consulta nao pode vir pronta do paginar().
+     *
+     *     $pagina = $this->modelo->paginarConsulta($sql, $parametros, $this->get('pagina'));
+     */
+    public function paginarConsulta(
+        string $sql,
+        array $parametros = [],
+        mixed $pagina = 1,
+        int $porPagina = Paginacao::PADRAO
+    ): Paginacao {
+        $porPagina = Paginacao::tamanho($porPagina);
+        $total     = $this->contarConsulta($sql, $parametros);
+
+        // Pedir a pagina 90 de uma lista que tem 4 mostraria uma tela vazia;
+        // a ultima pagina e uma resposta melhor do que nada.
+        $ultima = max(1, (int) ceil($total / $porPagina));
+        $numero = min(Paginacao::numero($pagina), $ultima);
+
+        $deslocamento = ($numero - 1) * $porPagina;
+
+        // LIMIT e OFFSET entram no TEXTO do SQL, e nao como "?", por dois
+        // motivos: o MySQL nao aceita parametro nessa posicao enquanto o PDO
+        // nao emula prepares, e estes dois numeros nunca sao texto do
+        // usuario — sao inteiros calculados aqui em cima, nas linhas acima.
+        $registros = $this->consultar(
+            $sql . " LIMIT {$porPagina} OFFSET {$deslocamento}",
+            $parametros
+        );
+
+        return new Paginacao($registros, $numero, $porPagina, $total);
+    }
+
+    /**
+     * Quantos registros um SELECT devolveria, sem trazer os registros.
+     *
+     * A consulta vira uma subconsulta: assim o WHERE da pesquisa conta na
+     * hora de somar o total, e o numero de paginas bate com o que a tela
+     * esta mostrando.
+     */
+    public function contarConsulta(string $sql, array $parametros = []): int
+    {
+        $linhas = $this->consultar("SELECT COUNT(*) AS total FROM ({$sql}) AS contagem", $parametros);
+
+        return (int) ($linhas[0]['total'] ?? 0);
+    }
+
+    // ------------------------------------------------------------------
     // Escrita (Create / Update / Delete)
     // ------------------------------------------------------------------
 

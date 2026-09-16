@@ -4,9 +4,13 @@
  * Console do framework.
  *
  *     php console.php scaffold:crud tabela campo:tipo ...
+ *     php console.php scaffold:campo tabela campo:tipo ...
  *     php console.php scaffold:pesquisa tabela campo ...
+ *     php console.php scaffold:paginacao tabela [--por-pagina=N]
  *     php console.php auth:install [Modelo] [Prefixo]
+ *     php console.php auth:perfis perfil1,perfil2 [Modelo|prefixo]
  *     php console.php relatorio:pdf modelo|tabela [arquivo.pdf]
+ *     php console.php db:semear                  (roda banco/semear.php)
  *
  * Todos os comandos param no primeiro problema e nao deixam arquivos pela
  * metade: os arquivos so sao gravados depois que tudo foi validado.
@@ -22,7 +26,13 @@ use Nucleo\Config;
 use Nucleo\Database;
 use Nucleo\RelatorioPdf;
 
-const TIPOS_ACEITOS = ['string', 'text', 'integer', 'decimal', 'boolean', 'date', 'datetime', 'time'];
+const TIPOS_ACEITOS = [
+    'string', 'text', 'integer', 'decimal', 'boolean', 'date', 'datetime', 'time',
+    'arquivo', 'imagem',
+];
+
+/** Tipos em que a coluna guarda o caminho de um arquivo enviado. */
+const TIPOS_ARQUIVO = ['arquivo', 'imagem'];
 const CAMPOS_RESERVADOS = ['id', 'criado_em'];
 
 $comando    = $argv[1] ?? '';
@@ -33,9 +43,13 @@ $argumentos = array_values(array_filter($argumentos, fn (string $a): bool => $a 
 try {
     match ($comando) {
         'scaffold:crud'     => gerarCrud($argumentos),
+        'scaffold:campo'    => gerarCampo($argumentos),
         'scaffold:pesquisa' => gerarPesquisa($argumentos),
+        'scaffold:paginacao' => gerarPaginacao($argumentos),
         'auth:install'      => gerarAutenticacao($argumentos),
+        'auth:perfis'       => gerarPerfis($argumentos),
         'relatorio:pdf'     => gerarRelatorioPdf($argumentos),
+        'db:semear'         => semearBanco($argumentos),
         default             => ajuda($comando),
     };
 } catch (Throwable $erro) {
@@ -64,9 +78,14 @@ function ajuda(string $comando): void
 
     Uso:
       php console.php scaffold:crud <tabela> <campo:tipo> ... [opcoes]
+      php console.php scaffold:campo <tabela> <campo:tipo> ... [--remover]
       php console.php scaffold:pesquisa <tabela> <campo> ... [--remover]
+      php console.php scaffold:paginacao <tabela> [--por-pagina=N] [--remover]
       php console.php auth:install [Modelo|tabela] [Prefixo]
+      php console.php auth:perfis <perfil1,perfil2,...> [Modelo|prefixo]
       php console.php relatorio:pdf <modelo|tabela> [arquivo.pdf]
+      php console.php db:semear                      roda banco/semear.php
+      php console.php db:semear <tabela> [quantidade]  atalho: enche uma tabela
 
     Tipos de campo:
       string  text  integer  decimal  boolean  date  datetime  time
@@ -84,16 +103,40 @@ function ajuda(string $comando): void
       --modelo=Nome      define o nome da classe do model
       --sem-menu         nao adiciona o recurso a configuracoes/menu.php
 
+    Opcoes do scaffold:campo (altera um CRUD que ja existe):
+      --obrigatorio      o campo novo nasce com a regra obrigatorio()
+      --remover          tira o campo do CRUD e APAGA a coluna do banco
+      --forcar           nao pergunta antes de apagar a coluna
+
     Opcao do scaffold:pesquisa:
       --remover          tira o formulario de pesquisa do index
+
+    Opcoes do scaffold:paginacao (quebra a listagem em paginas):
+      --por-pagina=N     quantos registros por pagina (padrao 20)
+      --remover          volta a listar tudo de uma vez
+
+    Opcoes do auth:perfis (quem pode o que, dentro de uma tela de login):
+      --remover          tira os perfis e APAGA a coluna perfil do banco
+      --forcar           nao pergunta antes de apagar
+
+    Opcoes do db:semear (os dados ficam em banco/semear.php):
+      --limpar           apaga os registros atuais antes de semear
+      --tudo             no atalho, enche todas as tabelas
+      --semente=N        repete sempre os mesmos dados (util em sala)
 
     Opcao geral:
       -v                 mostra os detalhes tecnicos quando algo falha
 
     Exemplos:
       php console.php scaffold:crud produtos nome:string preco:decimal --auth
+      php console.php scaffold:campo produtos peso:decimal
+      php console.php scaffold:campo produtos categoria_id:belongs_to=categorias
       php console.php scaffold:pesquisa produtos nome preco
+      php console.php scaffold:paginacao produtos --por-pagina=15
+      php console.php db:semear
+      php console.php db:semear produtos 30
       php console.php auth:install Professor
+      php console.php auth:perfis admin,coordenador,professor
       php console.php scaffold:crud aulas titulo:string --auth=professor
 
     TXT;
@@ -124,6 +167,19 @@ function gerarCrud(array $argumentos): void
     validarNome($tabela, 'nome de tabela');
 
     $campos = interpretarCampos(array_slice($posicionais, 1));
+
+    // O primeiro campo vira o titulo da listagem, a regra obrigatoria do
+    // model e o valor conferido pelos testes gerados. Um caminho de arquivo
+    // nao serve para nada disso.
+    if (in_array($campos[0][1], TIPOS_ARQUIVO, true) && $campos[0][2] === null) {
+        throw new InvalidArgumentException(
+            "O primeiro campo nao pode ser do tipo {$campos[0][1]}: e dele que saem o titulo da\n"
+            . "listagem, a regra obrigatoria do model e as asercoes dos testes.\n"
+            . "Comece por um texto:\n"
+            . "  php console.php scaffold:crud {$tabela} nome:string {$campos[0][0]}:{$campos[0][1]}"
+        );
+    }
+
     $classe = $opcoes['modelo'] ?? classeDaTabela($tabela);
 
     if (!preg_match('/^[A-Z][A-Za-z0-9_]*$/', $classe)) {
@@ -435,6 +491,8 @@ function tipoSql(string $tipo): string
         'datetime' => 'DATETIME',
         'time'     => 'TIME',
         'text'     => 'TEXT',
+        // arquivo e imagem: a coluna guarda o CAMINHO do arquivo dentro de
+        // views/uploads. O arquivo em si vai para o disco, nunca para o banco.
         default    => 'VARCHAR(255)',
     };
 }
@@ -784,6 +842,12 @@ function regrasDeValidacao(array $campos): string
     $linhas = [];
 
     foreach ($campos as $indice => [$nome, $tipo, $relacao]) {
+        // O valor de um campo de arquivo nao vem do formulario: quem confere
+        // o upload e a classe Nucleo\Arquivo, dentro do controller.
+        if ($relacao === null && in_array($tipo, TIPOS_ARQUIVO, true)) {
+            continue;
+        }
+
         $regras = [];
 
         if ($indice === 0 || $relacao !== null) {
@@ -837,6 +901,89 @@ function metodosRelacoesModelo(array $campos): string
 // Geradores: controller
 // =====================================================================
 
+/** Os campos do recurso que guardam o caminho de um arquivo enviado. */
+function camposDeArquivo(array $campos): array
+{
+    return array_values(array_filter(
+        $campos,
+        fn (array $campo): bool => ($campo[2] ?? null) === null
+            && in_array($campo[1], TIPOS_ARQUIVO, true)
+    ));
+}
+
+/**
+ * Nome da variavel que guarda o upload de uma coluna: foto -> $arquivoFoto.
+ *
+ * O prefixo existe para o nome da coluna nunca esbarrar em uma variavel que
+ * o metodo ja usa ($dados, $erros, $registro, $id...).
+ */
+function variavelDoArquivo(string $nome): string
+{
+    return 'arquivo' . pascal($nome);
+}
+
+/**
+ * Os trechos que o controller ganha quando o recurso tem campo de arquivo.
+ *
+ * Sao cinco pedacos, em ordem de execucao:
+ *
+ *   receber     pega o arquivo do formulario (null quando ninguem escolheu)
+ *   conferir    junta o problema do upload aos erros da validacao
+ *   gravar      move para o disco, so depois que tudo passou
+ *   substituir  igual ao gravar, e ainda apaga o arquivo anterior
+ *   apagar      tira do disco o arquivo do registro excluido
+ *
+ * Sem campo de arquivo, todos voltam vazios e o controller sai exatamente
+ * como sempre foi.
+ */
+function trechoDeArquivos(array $arquivos, string $parte, string $pasta): string
+{
+    if ($arquivos === []) {
+        return '';
+    }
+
+    $blocos = [];
+
+    foreach ($arquivos as [$nome, $tipo]) {
+        $var = '$' . variavelDoArquivo($nome);
+
+        $blocos[] = match ($parte) {
+            'receber' => sprintf(
+                "        %s = \$this->%s('%s');",
+                $var,
+                $tipo === 'imagem' ? 'imagem' : 'arquivo',
+                $nome
+            ),
+            'conferir' => "        if ({$var} !== null && (\$problema = {$var}->problema()) !== null) {\n"
+                . "            \$erros['{$nome}'] = \$problema;\n"
+                . '        }',
+            'gravar' => "        if ({$var} !== null) {\n"
+                . "            \$dados['{$nome}'] = {$var}->salvar('{$pasta}');\n"
+                . '        }',
+            'substituir' => "        if ({$var} !== null) {\n"
+                . "            \$dados['{$nome}'] = {$var}->salvar('{$pasta}');\n"
+                . "            Arquivo::apagar(\$registro['{$nome}'] ?? null);\n"
+                . '        }',
+            'apagar' => "        Arquivo::apagar(\$registro['{$nome}'] ?? null);",
+            default  => '',
+        };
+    }
+
+    // Os "receber" e os "apagar" sao uma linha cada e ficam juntos; os
+    // outros sao blocos if e ganham uma linha em branco entre eles.
+    $juntos = in_array($parte, ['receber', 'apagar'], true) ? "\n" : "\n\n";
+    $texto  = implode($juntos, $blocos);
+
+    $comentario = match ($parte) {
+        'gravar'     => "        // O arquivo so vai para o disco depois que o resto passou.\n",
+        'substituir' => "        // O arquivo novo substitui o anterior, que sai do disco.\n",
+        'apagar'     => "        // O registro saiu; o arquivo dele nao fica ocupando disco.\n",
+        default      => '',
+    };
+
+    return "\n" . $comentario . $texto . "\n";
+}
+
 function controllerGerado(
     string $tabela,
     string $classe,
@@ -845,10 +992,32 @@ function controllerGerado(
     array $campos,
     string|false $provider
 ): string {
+    // Campo de arquivo nao entra no $dados: o valor dele nao vem do $_POST,
+    // e sim do $_FILES, depois de conferido e gravado em disco.
+    $arquivos = camposDeArquivo($campos);
+
     $dados = implode("\n", array_map(
         fn (array $c): string => "            '{$c[0]}' => \$this->post('{$c[0]}'),",
-        $campos
+        array_values(array_filter(
+            $campos,
+            fn (array $c): bool => !in_array($c, $arquivos, true)
+        ))
     ));
+
+    $importarArquivo = $arquivos === [] ? '' : "\nuse Nucleo\\Arquivo;";
+    $receber         = trechoDeArquivos($arquivos, 'receber', $pasta);
+    $conferir        = trechoDeArquivos($arquivos, 'conferir', $pasta);
+    $gravarNovo      = trechoDeArquivos($arquivos, 'gravar', $pasta);
+    $gravarEdicao    = trechoDeArquivos($arquivos, 'substituir', $pasta);
+    $apagarArquivos  = trechoDeArquivos($arquivos, 'apagar', $pasta);
+
+    // Com arquivo, o atualizar() e o excluir() precisam do registro antigo
+    // para saber qual arquivo sai do disco.
+    $buscarAtual = $arquivos === []
+        ? "        if (!\$this->modelo->existe(\$id)) {\n            \$this->naoEncontrado();\n        }"
+        : "        \$registro = \$this->modelo->buscar(\$id);\n\n        if (\$registro === null) {\n            \$this->naoEncontrado();\n        }";
+
+    $buscarParaExcluir = $arquivos === [] ? '' : "\n        \$registro = \$this->modelo->buscar(\$id);\n";
 
     $relacoes = '';
 
@@ -863,14 +1032,7 @@ function controllerGerado(
     $filtros = '';
 
     foreach (array_merge([['id', 'integer', null]], $campos) as [$nome, $tipo, $relacao]) {
-        $exato = $nome === 'id' || $relacao !== null || in_array($tipo, ['integer', 'decimal', 'boolean'], true);
-
-        $filtros .= "        \$filtro = \$this->get('{$nome}');\n"
-            . "        if (is_scalar(\$filtro) && (string) \$filtro !== '') {\n"
-            . ($exato
-                ? "            \$condicoes[] = '{$nome} = ?';\n            \$parametros[] = \$filtro;\n"
-                : "            \$condicoes[] = '{$nome} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;\n            \$parametros[] = Sql::comoLike((string) \$filtro);\n")
-            . "        }\n\n";
+        $filtros .= filtroRelatorioGerado($nome, $tipo, $relacao);
     }
 
     $colunas = implode(', ', array_merge(["'id'"], array_map(fn (array $c): string => "'{$c[0]}'", $campos)));
@@ -880,7 +1042,7 @@ function controllerGerado(
 
         namespace Controllers;
 
-        use Modelos\{{CLASSE}};
+        use Modelos\{{CLASSE}};{{IMPORTAR_ARQUIVO}}
         use Nucleo\Controller;
         use Nucleo\RelatorioPdf;
         use Nucleo\Sql;
@@ -920,13 +1082,13 @@ function controllerGerado(
                 $dados = [
         {{DADOS}}
                 ];
-
+        {{RECEBER}}
                 $erros = $this->modelo->validar($dados);
-
+        {{CONFERIR}}
                 if ($erros !== []) {
                     $this->voltarComErros($erros, '{{PASTA}}/criar');
                 }
-
+        {{GRAVAR_NOVO}}
                 $id = $this->modelo->criar($dados);
 
                 $this->mensagem('sucesso', '{{CLASSE}} criado com sucesso.');
@@ -968,20 +1130,18 @@ function controllerGerado(
             {
         {{GUARDA}}        $this->exigirFormularioValido();
 
-                if (!$this->modelo->existe($id)) {
-                    $this->naoEncontrado();
-                }
+        {{BUSCAR_ATUAL}}
 
                 $dados = [
         {{DADOS}}
                 ];
-
+        {{RECEBER}}
                 $erros = $this->modelo->validar($dados, $id);
-
+        {{CONFERIR}}
                 if ($erros !== []) {
                     $this->voltarComErros($erros, '{{PASTA}}/editar/' . $id);
                 }
-
+        {{GRAVAR_EDICAO}}
                 $this->modelo->atualizar($id, $dados);
 
                 $this->mensagem('sucesso', '{{CLASSE}} atualizado com sucesso.');
@@ -1022,32 +1182,82 @@ function controllerGerado(
             public function excluir(string $id): void
             {
         {{GUARDA}}        $this->exigirFormularioValido();
-
+        {{BUSCAR_PARA_EXCLUIR}}
                 if (!$this->modelo->excluir($id)) {
                     $this->naoEncontrado();
                 }
-
+        {{APAGAR_ARQUIVOS}}
                 $this->mensagem('sucesso', '{{CLASSE}} excluido com sucesso.');
                 $this->redirecionar('{{PASTA}}');
             }
         }
         PHP, [
-        '{{CLASSE}}'   => $classe,
-        '{{RECURSO}}'  => $recurso,
-        '{{PASTA}}'    => $pasta,
-        '{{TABELA}}'   => $tabela,
-        '{{GUARDA}}'   => $guarda,
-        '{{DADOS}}'    => $dados,
-        '{{RELACOES}}' => $relacoes,
-        '{{FILTROS}}'  => $filtros,
-        '{{COLUNAS}}'  => $colunas,
-        '{{CAMPO}}'    => $campos[0][0],
+        '{{CLASSE}}'              => $classe,
+        '{{RECURSO}}'             => $recurso,
+        '{{PASTA}}'               => $pasta,
+        '{{TABELA}}'              => $tabela,
+        '{{GUARDA}}'              => $guarda,
+        '{{DADOS}}'               => $dados,
+        '{{RELACOES}}'            => $relacoes,
+        '{{FILTROS}}'             => $filtros,
+        '{{COLUNAS}}'             => $colunas,
+        '{{CAMPO}}'               => $campos[0][0],
+        '{{IMPORTAR_ARQUIVO}}'    => $importarArquivo,
+        '{{RECEBER}}'             => $receber,
+        '{{CONFERIR}}'            => $conferir,
+        '{{GRAVAR_NOVO}}'         => $gravarNovo,
+        '{{GRAVAR_EDICAO}}'       => $gravarEdicao,
+        '{{BUSCAR_ATUAL}}'        => $buscarAtual,
+        '{{BUSCAR_PARA_EXCLUIR}}' => $buscarParaExcluir,
+        '{{APAGAR_ARQUIVOS}}'     => $apagarArquivos,
     ]);
+}
+
+/**
+ * Um filtro do relatorio: le a coluna da query string e, se veio alguma
+ * coisa, acrescenta a condicao ao WHERE.
+ *
+ * Texto procura pelo trecho (LIKE); numero, data e chave estrangeira
+ * comparam o valor exato. O scaffold:crud e o scaffold:campo geram por
+ * aqui, entao o filtro sai igual nos dois.
+ */
+function filtroRelatorioGerado(string $nome, string $tipo, ?string $relacao): string
+{
+    $exato = $nome === 'id' || $relacao !== null || in_array($tipo, ['integer', 'decimal', 'boolean'], true);
+
+    return "        \$filtro = \$this->get('{$nome}');\n"
+        . "        if (is_scalar(\$filtro) && (string) \$filtro !== '') {\n"
+        . ($exato
+            ? "            \$condicoes[] = '{$nome} = ?';\n            \$parametros[] = \$filtro;\n"
+            : "            \$condicoes[] = '{$nome} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;\n            \$parametros[] = Sql::comoLike((string) \$filtro);\n")
+        . "        }\n\n";
 }
 
 // =====================================================================
 // Geradores: views
 // =====================================================================
+
+/**
+ * Como o valor de uma coluna aparece na listagem e na tela de detalhe.
+ *
+ * Texto passa por e() contra XSS; boolean vira Sim/Nao; arquivo vira link e
+ * imagem vira miniatura — esses dois ja devolvem HTML pronto, entao nao
+ * passam por e() de novo.
+ *
+ * O scaffold:crud e o scaffold:campo geram por aqui, para a coluna sair
+ * igual tendo sido criada de um jeito ou do outro.
+ */
+function valorNaTela(string $nome, string $tipo, bool $detalhe = false): string
+{
+    $campo = "\$registro['{$nome}'] ?? null";
+
+    return match ($tipo) {
+        'boolean' => "<?= e(sim_nao({$campo})) ?>",
+        'imagem'  => '<?= miniatura(' . $campo . ($detalhe ? ', 160' : '') . ') ?>',
+        'arquivo' => "<?= link_arquivo({$campo}) ?>",
+        default   => "<?= e(\$registro['{$nome}'] ?? '') ?>",
+    };
+}
 
 function indexGerado(string $tabela, string $pasta, array $campos): string
 {
@@ -1056,9 +1266,7 @@ function indexGerado(string $tabela, string $pasta, array $campos): string
 
     foreach ($campos as [$nome, $tipo, $relacao]) {
         $cabecalhos .= "                <th>{$nome}</th>\n";
-        $celulas .= $tipo === 'boolean'
-            ? "                <td><?= e(sim_nao(\$registro['{$nome}'] ?? null)) ?></td>\n"
-            : "                <td><?= e(\$registro['{$nome}'] ?? '') ?></td>\n";
+        $celulas .= '                <td>' . valorNaTela($nome, $tipo) . "</td>\n";
     }
 
     return strtr(<<<'HTML'
@@ -1115,11 +1323,13 @@ function formularioGerado(string $pasta, array $campos): string
 {
     $blocos = [];
 
-    foreach ($campos as [$nome, $tipo, $relacao]) {
-        $blocos[] = $relacao !== null
-            ? campoRelacao($nome, $relacao)
-            : ($tipo === 'boolean' ? campoBoolean($nome) : campoSimples($nome, $tipo));
+    foreach ($campos as $campo) {
+        $blocos[] = campoFormularioGerado($campo);
     }
+
+    // Sem enctype o navegador manda so o NOME do arquivo, e nada chega ao
+    // $_FILES. E o erro mais comum de formulario com upload.
+    $enctype = temCampoDeArquivo($campos) ? ' enctype="multipart/form-data"' : '';
 
     return strtr(<<<'HTML'
         <div class="mb-4">
@@ -1127,7 +1337,7 @@ function formularioGerado(string $pasta, array $campos): string
             <p class="text-secondary mb-0">Preencha os dados abaixo.</p>
         </div>
 
-        <form class="card border-0 shadow-sm p-4" method="post" action="<?= url('{{PASTA}}/' . ($registro ? 'atualizar/' . $registro['id'] : 'salvar')) ?>">
+        <form class="card border-0 shadow-sm p-4" method="post"{{ENCTYPE}} action="<?= url('{{PASTA}}/' . ($registro ? 'atualizar/' . $registro['id'] : 'salvar')) ?>">
             <?= campo_csrf() ?>
             <div class="row g-3">
         {{CAMPOS}}    </div>
@@ -1137,8 +1347,72 @@ function formularioGerado(string $pasta, array $campos): string
             </div>
         </form>
         HTML, [
-        '{{PASTA}}'  => $pasta,
-        '{{CAMPOS}}' => implode('', $blocos),
+        '{{PASTA}}'   => $pasta,
+        '{{ENCTYPE}}' => $enctype,
+        '{{CAMPOS}}'  => implode('', $blocos),
+    ]);
+}
+
+/** Algum campo do recurso guarda arquivo? */
+function temCampoDeArquivo(array $campos): bool
+{
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        if ($relacao === null && in_array($tipo, TIPOS_ARQUIVO, true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Escolhe o campo do formulario conforme o tipo da coluna.
+ *
+ * @param array{0:string,1:string,2:?string} $campo nome, tipo e tabela pai
+ */
+function campoFormularioGerado(array $campo): string
+{
+    [$nome, $tipo, $relacao] = $campo;
+
+    if ($relacao !== null) {
+        return campoRelacao($nome, $relacao);
+    }
+
+    if (in_array($tipo, TIPOS_ARQUIVO, true)) {
+        return campoArquivo($nome, $tipo);
+    }
+
+    return $tipo === 'boolean' ? campoBoolean($nome) : campoSimples($nome, $tipo);
+}
+
+/**
+ * Campo de envio de arquivo.
+ *
+ * Na edicao ele nasce vazio de proposito: um <input type="file"> nao pode ser
+ * preenchido pelo servidor (seria um jeito de o site ler arquivos da maquina
+ * de quem visita). Por isso a tela mostra o arquivo atual ao lado e so troca
+ * quando alguem escolhe outro.
+ */
+function campoArquivo(string $nome, string $tipo): string
+{
+    $imagem = $tipo === 'imagem';
+
+    return strtr(<<<'HTML'
+        <div class="col-md-6">
+            <label class="form-label" for="{{NOME}}">{{NOME}}</label>
+            <input class="form-control <?= tem_erro('{{NOME}}') ? 'is-invalid' : '' ?>" id="{{NOME}}" type="file" name="{{NOME}}"{{ACEITA}}>
+            <?php if ($registro && ($registro['{{NOME}}'] ?? '') !== ''): ?>
+                <div class="form-text d-flex align-items-center gap-2">{{ATUAL}} Envie outro para substituir.</div>
+            <?php endif ?>
+            <?php if ($mensagem = erro_de('{{NOME}}')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+        </div>
+
+    HTML, [
+        '{{NOME}}'   => $nome,
+        '{{ACEITA}}' => $imagem ? ' accept="image/*"' : '',
+        '{{ATUAL}}'  => $imagem
+            ? "<?= miniatura(\$registro['{$nome}'], 32) ?>"
+            : "Atual: <?= link_arquivo(\$registro['{$nome}']) ?> —",
     ]);
 }
 
@@ -1228,12 +1502,8 @@ function verGerado(string $pasta, array $campos): string
     $linhas = '';
 
     foreach ($campos as [$nome, $tipo, $relacao]) {
-        $valor = $tipo === 'boolean'
-            ? "sim_nao(\$registro['{$nome}'] ?? null)"
-            : "\$registro['{$nome}'] ?? ''";
-
         $linhas .= "        <dt class=\"col-sm-3\">{$nome}</dt>\n"
-            . "        <dd class=\"col-sm-9\"><?= e({$valor}) ?></dd>\n";
+            . '        <dd class="col-sm-9">' . valorNaTela($nome, $tipo, true) . "</dd>\n";
     }
 
     return strtr(<<<'HTML'
@@ -1271,6 +1541,11 @@ function valorTeste(string $tipo, bool $atualizado = false, string $nome = ''): 
     // "Teste" generico o proprio teste gerado nasceria falhando na validacao.
     if ($nome === 'email') {
         return $atualizado ? 'maria@example.com' : 'ana@example.com';
+    }
+
+    // A coluna guarda o caminho do arquivo; nos testes basta um caminho.
+    if (in_array($tipo, TIPOS_ARQUIVO, true)) {
+        return $atualizado ? 'uploads/teste/depois.png' : 'uploads/teste/antes.png';
     }
 
     return match ($tipo) {
@@ -1365,16 +1640,27 @@ function definicoesDaTabelaDeTeste(string $tabela, array $campos): string
     return implode(",\n                ", array_merge($colunas, $chaves));
 }
 
-function testeModeloGerado(string $tabela, string $classe, array $campos): string
+/**
+ * As linhas que conferem se o metodo da tabela pai devolve as opcoes do
+ * <select>. O scaffold:crud e o scaffold:campo geram por aqui.
+ */
+function assercoesDeRelacaoGeradas(array $campos): string
 {
-    $principal = $campos[0][0];
-    $conferirRelacoes = '';
+    $linhas = '';
 
     foreach (relacoesUnicas($campos) as $campo) {
-        $conferirRelacoes .= "        \$opcoes = \$this->modelo->{$campo[2]}();\n"
+        $linhas .= "        \$opcoes = \$this->modelo->{$campo[2]}();\n"
             . "        \$this->assertTotal(2, \$opcoes);\n"
             . "        \$this->assertVerdadeiro(in_array(\$this->idsRelacoes['{$campo[0]}'], array_column(\$opcoes, 'id'), true));\n\n";
     }
+
+    return $linhas;
+}
+
+function testeModeloGerado(string $tabela, string $classe, array $campos): string
+{
+    $principal = $campos[0][0];
+    $conferirRelacoes = assercoesDeRelacaoGeradas($campos);
 
     return strtr(<<<'PHP'
         <?php
@@ -3311,19 +3597,33 @@ function controllerComPesquisa(
     // campos nao pode deixar sobras da pesquisa anterior.
     $bloco = blocoIndexLimpo($antigo);
 
-    // A listagem passa a vir de uma consulta com WHERE.
-    $bloco = str_replace(
-        "'registros' => \$this->modelo->todos(),",
-        "'registros' => \$this->modelo->consultar(\$sql, \$parametros),",
-        $bloco
-    );
+    [$inicioDaPaginacao] = marcadoresPaginacaoPhp();
 
-    if (!str_contains($bloco, "'registros' => \$this->modelo->consultar(\$sql, \$parametros),")) {
-        throw new RuntimeException(
-            'Nao encontrei a linha "\'registros\' => $this->modelo->todos()," no index() de '
-            . caminhoRelativo($arquivo) . ".\n"
-            . 'Reponha essa linha (ou gere o CRUD de novo) antes de acrescentar a pesquisa.'
+    $comPaginacao = str_contains($bloco, $inicioDaPaginacao);
+
+    if ($comPaginacao) {
+        // A tela ja e paginada: quem passa a receber o WHERE e o paginador,
+        // para o total de paginas sair do resultado do filtro.
+        $bloco = str_replace(
+            "\$pagina = \$this->modelo->paginar(",
+            "\$pagina = \$this->modelo->paginarConsulta(\$sql, \$parametros, ",
+            $bloco
         );
+    } else {
+        // A listagem passa a vir de uma consulta com WHERE.
+        $bloco = str_replace(
+            "'registros' => \$this->modelo->todos(),",
+            "'registros' => \$this->modelo->consultar(\$sql, \$parametros),",
+            $bloco
+        );
+
+        if (!str_contains($bloco, "'registros' => \$this->modelo->consultar(\$sql, \$parametros),")) {
+            throw new RuntimeException(
+                'Nao encontrei a linha "\'registros\' => $this->modelo->todos()," no index() de '
+                . caminhoRelativo($arquivo) . ".\n"
+                . 'Reponha essa linha (ou gere o CRUD de novo) antes de acrescentar a pesquisa.'
+            );
+        }
     }
 
     // O que a view precisa para redesenhar o formulario ja preenchido.
@@ -3353,11 +3653,19 @@ function controllerComPesquisa(
         );
     }
 
+    $filtros = filtrosPesquisaGerados($campos, ordemPadraoDoModelo($classe), $pasta);
+
+    if ($comPaginacao) {
+        // Antes do paginador: ele recebe o $sql que o filtro acabou de montar.
+        $bloco = str_replace($inicioDaPaginacao, $filtros . "\n\n" . $inicioDaPaginacao, $bloco);
+
+        return str_replace($antigo, $bloco, $conteudo);
+    }
+
     // E o trecho gerado entra logo antes da chamada da view.
     $bloco = (string) preg_replace(
         '/(\n+)([ ]*)\$this->view\(/',
-        '${1}' . preg_quote_replace(filtrosPesquisaGerados($campos, ordemPadraoDoModelo($classe), $pasta))
-            . "\n\n\${2}\$this->view(",
+        '${1}' . preg_quote_replace($filtros) . "\n\n\${2}\$this->view(",
         $bloco,
         1,
         $trocas
@@ -3399,6 +3707,13 @@ function blocoIndexLimpo(string $bloco): string
     $bloco = str_replace(
         "'registros' => \$this->modelo->consultar(\$sql, \$parametros),",
         "'registros' => \$this->modelo->todos(),",
+        $bloco
+    );
+
+    // Se a tela tambem e paginada, o paginador volta a ler a tabela inteira.
+    $bloco = str_replace(
+        "\$pagina = \$this->modelo->paginarConsulta(\$sql, \$parametros, ",
+        "\$pagina = \$this->modelo->paginar(",
         $bloco
     );
 
@@ -3660,4 +3975,2694 @@ function filtroRelacao(string $nome, string $tabelaPai): string
         '{{NOME}}' => $nome,
         '{{PAI}}'  => $tabelaPai,
     ]);
+}
+
+// =====================================================================
+// scaffold:campo
+// =====================================================================
+
+/**
+ * Acrescenta (ou tira) campos de um CRUD que ja existe.
+ *
+ * O scaffold:crud se recusa a sobrescrever arquivos. Ate aqui, para ganhar
+ * mais uma coluna em um recurso pronto era preciso apagar os sete arquivos
+ * gerados — e junto com eles tudo que ja tinha sido escrito a mao.
+ *
+ * Este comando altera no lugar: esquema, banco, model, controller, as tres
+ * views e os dois testes gerados.
+ */
+function gerarCampo(array $argumentos): void
+{
+    [$posicionais, $opcoes] = separarOpcoes($argumentos, ['remover', 'obrigatorio', 'forcar']);
+
+    $remover = array_key_exists('remover', $opcoes);
+
+    if (count($posicionais) < 2) {
+        throw new InvalidArgumentException(
+            "Uso: php console.php scaffold:campo <tabela> <campo:tipo> [campo2:tipo ...]\n"
+            . "Exemplo: php console.php scaffold:campo produtos peso:decimal\n"
+            . 'Para tirar um campo: php console.php scaffold:campo produtos peso --remover'
+        );
+    }
+
+    $modelo  = resolverModeloRelatorio($posicionais[0]);
+    $classe  = $modelo['classe'];
+    $tabela  = $modelo['tabela'];
+    $recurso = pascal($tabela);
+    $pasta   = strtolower($recurso);
+
+    $colunas = colunasDoEsquema($tabela);
+
+    if ($colunas === []) {
+        throw new RuntimeException(
+            "Nao encontrei a tabela \"{$tabela}\" em " . caminhoRelativo(arquivoEsquema()) . ".\n"
+            . "Gere o CRUD antes:\n  php console.php scaffold:crud {$tabela} nome:string"
+        );
+    }
+
+    $pedidos = array_slice($posicionais, 1);
+
+    $campos = $remover
+        ? camposParaRemover($pedidos, $colunas, $tabela)
+        : camposParaAcrescentar($pedidos, $colunas, $tabela);
+
+    $arquivos = arquivosDoRecurso($classe, $recurso, $pasta);
+
+    if (!is_file($arquivos['modelo'])) {
+        throw new RuntimeException(
+            'Model nao encontrado: ' . caminhoRelativo($arquivos['modelo']) . ".\n"
+            . 'O scaffold:campo altera um CRUD que ja existe.'
+        );
+    }
+
+    // -------------------------------------------------------------
+    // 1. Monta todos os arquivos na memoria. Nada e gravado ainda,
+    //    entao um anexo que nao case aborta antes de mexer no banco.
+    // -------------------------------------------------------------
+    $avisos = [];
+    $novos  = [];
+
+    $transformar = [
+        'modelo'           => fn (string $t): ?string => $remover
+            ? modeloSemCampos($t, $campos, $colunas)
+            : modeloComCampos($t, $campos, array_key_exists('obrigatorio', $opcoes)),
+        'controller'       => fn (string $t): ?string => $remover
+            ? controllerSemCampos($t, $campos, $colunas)
+            : controllerComCampos($t, $campos, $pasta),
+        'formulario'       => fn (string $t): ?string => $remover
+            ? formularioSemCampos($t, $campos)
+            : formularioComCampos($t, $campos),
+        'index'            => fn (string $t): ?string => $remover
+            ? indexSemCampos($t, $campos)
+            : indexComCampos($t, $campos),
+        'ver'              => fn (string $t): ?string => $remover
+            ? verSemCampos($t, $campos)
+            : verComCampos($t, $campos),
+        'teste_modelo'     => fn (string $t): ?string => testeComCampos($t, $tabela, $campos, $colunas, $remover),
+        'teste_controller' => fn (string $t): ?string => testeComCampos($t, $tabela, $campos, $colunas, $remover),
+    ];
+
+    foreach ($transformar as $chave => $alterar) {
+        $caminho = $arquivos[$chave];
+
+        if (!is_file($caminho)) {
+            continue;
+        }
+
+        $original = lerArquivo($caminho);
+        $novo     = $alterar($original);
+
+        if ($novo === null) {
+            $avisos[] = 'Nao consegui alterar ' . caminhoRelativo($caminho) . ' — ajuste a mao.';
+        } elseif ($novo !== $original) {
+            $novos[$caminho] = $novo;
+        }
+    }
+
+    // O auth:install gera um terceiro teste que tambem recria a tabela do
+    // recurso. Sem acertar o CREATE TABLE dele, o campo novo derruba a suite.
+    foreach (testesQueRecriamATabela($tabela, $arquivos) as $caminho) {
+        $original = lerArquivo($caminho);
+        $novo     = testeExtraComCampos($original, $tabela, $campos, $colunas, $remover);
+
+        if ($novo === null) {
+            $avisos[] = 'Nao consegui alterar ' . caminhoRelativo($caminho) . ' — ajuste a mao.';
+        } elseif ($novo !== $original) {
+            $novos[$caminho] = $novo;
+        }
+    }
+
+    // O model e o unico arquivo sem o qual o campo nao funciona: sem ele na
+    // lista de $preenchiveis, o formulario grava e o valor some.
+    if (!isset($novos[$arquivos['modelo']])) {
+        throw new RuntimeException(
+            'Nao encontrei a propriedade $preenchiveis em ' . caminhoRelativo($arquivos['modelo']) . ".\n"
+            . 'Ela precisa continuar no formato gerado: protected array $preenchiveis = [...];'
+        );
+    }
+
+    // -------------------------------------------------------------
+    // 2. Apagar coluna apaga dado. Confirma antes.
+    // -------------------------------------------------------------
+    if ($remover && !array_key_exists('forcar', $opcoes)) {
+        $nomes = implode(', ', array_map(fn (array $c): string => $c[0], $campos));
+
+        echo "Isto vai APAGAR a(s) coluna(s) {$nomes} da tabela {$tabela}, com os dados que estiverem la.\n";
+
+        if (!confirmar('Continuar?')) {
+            echo "Nada foi alterado.\n";
+
+            return;
+        }
+    }
+
+    // -------------------------------------------------------------
+    // 3. Esquema e banco, com volta atras se algo falhar.
+    // -------------------------------------------------------------
+    $esquemas = lerEsquemas();
+
+    try {
+        esquemaComCampos($tabela, $campos, $remover);
+
+        if ($remover) {
+            bancoSemCampos($tabela, $campos);
+        } else {
+            bancoComCampos($tabela, $campos);
+        }
+    } catch (Throwable $e) {
+        restaurarEsquemas($esquemas);
+
+        throw $e;
+    }
+
+    // -------------------------------------------------------------
+    // 4. So agora os arquivos.
+    // -------------------------------------------------------------
+    regravarArquivos($novos);
+
+    $verbo = count($campos) === 1
+        ? ($remover ? 'Campo removido de' : 'Campo acrescentado em')
+        : ($remover ? 'Campos removidos de' : 'Campos acrescentados em');
+
+    echo "{$verbo} /{$pasta}\n";
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        printf("  %-18s %s\n", $nome, $relacao !== null ? "belongs_to={$relacao}" : $tipo);
+    }
+
+    echo "\n";
+
+    foreach (array_keys($novos) as $caminho) {
+        echo '  ~ ' . caminhoRelativo($caminho) . "\n";
+    }
+
+    echo '  ~ ' . caminhoRelativo(arquivoEsquema()) . "\n";
+    echo "  ~ tabela {$tabela} no banco\n";
+
+    foreach ($avisos as $aviso) {
+        echo "\nAVISO: {$aviso}\n";
+    }
+
+    if (!$remover && is_file($arquivos['index']) && str_contains(lerArquivo($arquivos['index']), 'scaffold:pesquisa')) {
+        $pesquisados = implode(' ', array_map(fn (array $c): string => $c[0], $campos));
+
+        echo "\nO formulario de pesquisa continua com os campos antigos. Para incluir os novos:\n";
+        echo "  php console.php scaffold:pesquisa {$tabela} <campos de antes> {$pesquisados}\n";
+    }
+
+    if (!$remover) {
+        $nomes = implode(' ', array_map(fn (array $c): string => $c[0], $campos));
+
+        echo "\nPara desfazer: php console.php scaffold:campo {$tabela} {$nomes} --remover\n";
+    }
+
+    echo "\nRode os testes com: php testes/executar.php {$classe}\n";
+}
+
+/**
+ * Campos novos: valida tipo e nome e recusa o que ja existe na tabela.
+ *
+ * @return list<array{0:string,1:string,2:?string}>
+ */
+function camposParaAcrescentar(array $pedidos, array $colunas, string $tabela): array
+{
+    $campos = interpretarCampos($pedidos);
+
+    foreach ($campos as [$nome, , $relacao]) {
+        if (isset($colunas[$nome])) {
+            throw new InvalidArgumentException(
+                "A tabela {$tabela} ja tem a coluna \"{$nome}\".\n"
+                . 'Colunas atuais: ' . implode(', ', array_keys($colunas))
+            );
+        }
+
+        // O roteador usa $_GET['url']: uma coluna com esse nome nunca
+        // receberia o valor digitado no filtro do relatorio.
+        if ($nome === 'url') {
+            throw new InvalidArgumentException(
+                'O campo "url" nao pode ser usado: o roteador ja ocupa esse nome na query string.'
+            );
+        }
+    }
+
+    validarRelacoes($campos, $tabela);
+
+    return $campos;
+}
+
+/**
+ * Campos a remover: o tipo vem do proprio esquema, entao aqui so se informa
+ * o nome. O primeiro campo do CRUD nao sai — ele e quem sustenta a
+ * validacao e os testes gerados.
+ *
+ * @return list<array{0:string,1:string,2:?string}>
+ */
+function camposParaRemover(array $pedidos, array $colunas, string $tabela): array
+{
+    $primeiro = campoPrincipal($colunas);
+    $campos   = [];
+
+    foreach ($pedidos as $pedido) {
+        $nome = strtolower(trim(explode(':', $pedido)[0]));
+
+        validarNome($nome, 'nome de campo');
+
+        if (in_array($nome, CAMPOS_RESERVADOS, true)) {
+            throw new InvalidArgumentException("O campo \"{$nome}\" e do framework e nao pode ser removido.");
+        }
+
+        if (!isset($colunas[$nome])) {
+            throw new InvalidArgumentException(
+                "A tabela {$tabela} nao tem a coluna \"{$nome}\".\n"
+                . 'Colunas disponiveis: ' . implode(', ', array_keys($colunas))
+            );
+        }
+
+        if ($nome === $primeiro) {
+            throw new InvalidArgumentException(
+                "\"{$nome}\" e o primeiro campo de {$tabela}: e dele que saem a regra obrigatoria\n"
+                . "do model e as asercoes dos testes gerados.\n"
+                . 'Para trocar o campo principal do recurso, gere o CRUD de novo.'
+            );
+        }
+
+        foreach ($campos as $escolhido) {
+            if ($escolhido[0] === $nome) {
+                throw new InvalidArgumentException("Campo repetido: {$nome}.");
+            }
+        }
+
+        [$tipo, $relacao] = $colunas[$nome];
+
+        $campos[] = [$nome, $tipo, $relacao];
+    }
+
+    return $campos;
+}
+
+/** @return array<string,string> os arquivos que o scaffold:crud gerou para o recurso */
+function arquivosDoRecurso(string $classe, string $recurso, string $pasta): array
+{
+    return [
+        'modelo'           => CAMINHO_MODELOS . "/{$classe}.php",
+        'controller'       => CAMINHO_CONTROLLERS . "/{$recurso}Controller.php",
+        'formulario'       => CAMINHO_VIEWS . "/{$pasta}/formulario.php",
+        'index'            => CAMINHO_VIEWS . "/{$pasta}/index.php",
+        'ver'              => CAMINHO_VIEWS . "/{$pasta}/ver.php",
+        'teste_modelo'     => CAMINHO_RAIZ . "/testes/modelos/{$classe}Test.php",
+        'teste_controller' => CAMINHO_RAIZ . "/testes/controllers/{$recurso}ControllerTest.php",
+    ];
+}
+
+/** Pergunta no terminal antes de uma acao que apaga dados. */
+function confirmar(string $pergunta): bool
+{
+    echo $pergunta . ' [s/N]: ';
+
+    $resposta = fgets(STDIN);
+
+    if ($resposta === false) {
+        echo "\nSem terminal para responder. Use --forcar se tem certeza.\n";
+
+        return false;
+    }
+
+    return in_array(strtolower(trim($resposta)), ['s', 'sim', 'y', 'yes'], true);
+}
+
+// ---------------------------------------------------------------------
+// scaffold:campo - model
+// ---------------------------------------------------------------------
+
+/**
+ * O model ganha o campo em $preenchiveis, a regra de validacao do tipo e,
+ * quando for uma relacao, o metodo que alimenta o <select>.
+ */
+function modeloComCampos(string $conteudo, array $campos, bool $obrigatorio): ?string
+{
+    $novo = preenchiveisComCampos($conteudo, $campos);
+
+    if ($novo === null) {
+        return null;
+    }
+
+    // As regras entram antes do ->erros(), que fecha a corrente do Validador.
+    if (preg_match('/^([ \t]*)->erros\(\);/m', $novo, $fim)) {
+        $regras = '';
+
+        foreach ($campos as [$nome, $tipo, $relacao]) {
+            foreach (regrasDoCampo($nome, $tipo, $relacao, $obrigatorio) as $regra) {
+                if (!str_contains($novo, $regra)) {
+                    $regras .= $fim[1] . $regra . "\n";
+                }
+            }
+        }
+
+        if ($regras !== '') {
+            $novo = (string) preg_replace_callback(
+                '/^[ \t]*->erros\(\);/m',
+                fn (array $m): string => $regras . $m[0],
+                $novo,
+                1
+            );
+        }
+    }
+
+    return modeloComRelacoes($novo, $campos);
+}
+
+/** Tira o campo do model: $preenchiveis, regras e metodo da relacao. */
+function modeloSemCampos(string $conteudo, array $campos, array $colunas): ?string
+{
+    $novo = preenchiveisSemCampos($conteudo, $campos);
+
+    if ($novo === null) {
+        return null;
+    }
+
+    foreach ($campos as [$nome, , $relacao]) {
+        // Sai qualquer linha da corrente do Validador que fale desse campo.
+        $novo = (string) preg_replace(
+            "/^[ \t]*->\w+\('" . preg_quote($nome, '/') . "'[^\n]*\n/m",
+            '',
+            $novo
+        );
+
+        if ($relacao !== null && !outraColunaUsaRelacao($colunas, $relacao, $campos)) {
+            // Sai o metodo que alimentava o <select>, com o comentario dele.
+            $novo = (string) preg_replace(
+                '/\n(?:[ \t]*\/\*\*(?:(?!\*\/)[\s\S])*\*\/\n)?[ \t]*public function '
+                    . preg_quote($relacao, '/') . '\(\): array\n[ \t]*\{\n[\s\S]*?\n[ \t]*\}\n/',
+                '',
+                $novo,
+                1
+            );
+        }
+    }
+
+    return $novo;
+}
+
+/** Acrescenta os metodos das tabelas pai antes do fecha-chaves da classe. */
+function modeloComRelacoes(string $conteudo, array $campos): string
+{
+    $metodos = '';
+
+    foreach (relacoesUnicas($campos) as $campo) {
+        if (preg_match('/function\s+' . preg_quote($campo[2], '/') . '\s*\(/', $conteudo)) {
+            continue;
+        }
+
+        $metodos .= metodosRelacoesModelo([$campo]);
+    }
+
+    if ($metodos === '') {
+        return $conteudo;
+    }
+
+    return (string) preg_replace('/\n\}\s*$/', "\n" . rtrim($metodos, "\n") . "\n}\n", $conteudo, 1);
+}
+
+/** As regras que um campo novo ganha, no mesmo criterio do scaffold:crud. */
+function regrasDoCampo(string $nome, string $tipo, ?string $relacao, bool $obrigatorio): array
+{
+    $regras = [];
+
+    if ($obrigatorio || $relacao !== null) {
+        $regras[] = "->obrigatorio('{$nome}')";
+    }
+
+    if ($nome === 'email') {
+        $regras[] = "->email('{$nome}')";
+    }
+
+    $doTipo = match ($tipo) {
+        'integer', 'decimal' => "->numerico('{$nome}')",
+        'string'             => "->maximo('{$nome}', 255)",
+        default              => null,
+    };
+
+    if ($doTipo !== null) {
+        $regras[] = $doTipo;
+    }
+
+    return $regras;
+}
+
+/** Acrescenta os nomes na lista $preenchiveis do model. */
+function preenchiveisComCampos(string $conteudo, array $campos): ?string
+{
+    $padrao = '/(protected\s+array\s+\$preenchiveis\s*=\s*\[)([^\]]*)(\]\s*;)/';
+
+    if (!preg_match($padrao, $conteudo)) {
+        return null;
+    }
+
+    return (string) preg_replace_callback($padrao, function (array $m) use ($campos): string {
+        $lista = trim($m[2]);
+
+        foreach ($campos as [$nome]) {
+            if (preg_match("/'" . preg_quote($nome, '/') . "'/", $lista)) {
+                continue;
+            }
+
+            $lista = $lista === '' ? "'{$nome}'" : $lista . ", '{$nome}'";
+        }
+
+        return $m[1] . $lista . $m[3];
+    }, $conteudo, 1);
+}
+
+/** Tira os nomes da lista $preenchiveis do model. */
+function preenchiveisSemCampos(string $conteudo, array $campos): ?string
+{
+    $padrao = '/(protected\s+array\s+\$preenchiveis\s*=\s*\[)([^\]]*)(\]\s*;)/';
+
+    if (!preg_match($padrao, $conteudo)) {
+        return null;
+    }
+
+    return (string) preg_replace_callback($padrao, function (array $m) use ($campos): string {
+        $remover = array_map(fn (array $c): string => $c[0], $campos);
+
+        $itens = array_filter(
+            array_map('trim', explode(',', $m[2])),
+            fn (string $item): bool => $item !== '' && !in_array(trim($item, "'\" "), $remover, true)
+        );
+
+        return $m[1] . implode(', ', $itens) . $m[3];
+    }, $conteudo, 1);
+}
+
+/** Alguma outra coluna da tabela ainda aponta para essa tabela pai? */
+function outraColunaUsaRelacao(array $colunas, string $pai, array $saindo): bool
+{
+    $nomesSaindo = array_map(fn (array $c): string => $c[0], $saindo);
+
+    foreach ($colunas as $nome => [, $relacao]) {
+        if ($relacao === $pai && !in_array($nome, $nomesSaindo, true)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// ---------------------------------------------------------------------
+// scaffold:campo - controller
+// ---------------------------------------------------------------------
+
+/**
+ * Recorta um metodo inteiro do controller, para alterar so o que esta
+ * dentro dele. Devolve null quando o metodo nao existe.
+ *
+ * E o que impede, por exemplo, que o filtro do relatorio() va parar no
+ * index() — os dois tem uma linha "$sql = 'SELECT * FROM '".
+ */
+function blocoMetodoDoController(string $conteudo, string $metodo): ?string
+{
+    $padrao = '/\n[ ]{4}public function ' . preg_quote($metodo, '/')
+        . '\([^)]*\)(?:\s*:\s*\w+)?\n[ ]{4}\{\n[\s\S]*?\n[ ]{4}\}\n/';
+
+    return preg_match($padrao, $conteudo, $encontrado) ? $encontrado[0] : null;
+}
+
+/**
+ * O controller passa a ler o campo do formulario, a filtrar por ele no
+ * relatorio e a mandar a lista da tabela pai para o <select>.
+ */
+function controllerComCampos(string $conteudo, array $campos, string $pasta): ?string
+{
+    $novo = dadosComCampos($conteudo, $campos);
+
+    if ($novo === null) {
+        return null;
+    }
+
+    $novo = controllerComArquivos($novo, camposDeArquivo($campos), $pasta);
+    $novo = relatorioComCampos($novo, $campos);
+
+    // criar() e editar() desenham o mesmo formulario: as duas precisam das
+    // opcoes da tabela pai.
+    foreach (['criar', 'editar'] as $metodo) {
+        $bloco = blocoMetodoDoController($novo, $metodo);
+
+        if ($bloco === null) {
+            continue;
+        }
+
+        $alterado = $bloco;
+
+        foreach (relacoesUnicas($campos) as $campo) {
+            $pai = $campo[2];
+
+            if (str_contains($alterado, "'{$pai}'")) {
+                continue;
+            }
+
+            $alterado = (string) preg_replace(
+                "/^([ \t]*)('registro'\s*=>[^\n]*,)$/m",
+                "\${1}\${2}\n\${1}" . str_pad("'{$pai}'", 11) . ' => \\$this->modelo->' . $pai . '(),',
+                $alterado,
+                1
+            );
+        }
+
+        $novo = str_replace($bloco, $alterado, $novo);
+    }
+
+    return $novo;
+}
+
+/** Desfaz o que o controllerComCampos() tinha colocado. */
+function controllerSemCampos(string $conteudo, array $campos, array $colunas): ?string
+{
+    $novo = dadosSemCampos($conteudo, $campos);
+
+    if ($novo === null) {
+        return null;
+    }
+
+    $novo = controllerSemArquivos($novo, $campos);
+    $novo = relatorioSemCampos($novo, $campos);
+
+    foreach ($campos as [, , $relacao]) {
+        if ($relacao === null || outraColunaUsaRelacao($colunas, $relacao, $campos)) {
+            continue;
+        }
+
+        $novo = (string) preg_replace(
+            "/^[ \t]*'" . preg_quote($relacao, '/') . "'\s*=>\s*\\\$this->modelo->"
+                . preg_quote($relacao, '/') . "\(\),\n/m",
+            '',
+            $novo
+        );
+    }
+
+    return $novo;
+}
+
+/**
+ * Poe no controller o tratamento de upload dos campos de arquivo.
+ *
+ * Gera exatamente os mesmos trechos do scaffold:crud (trechoDeArquivos()),
+ * so que encaixados em um controller que ja existe.
+ */
+function controllerComArquivos(string $conteudo, array $arquivos, string $pasta): string
+{
+    if ($arquivos === []) {
+        return $conteudo;
+    }
+
+    $conteudo = comImportacaoDeArquivo($conteudo);
+
+    foreach (['salvar' => 'gravar', 'atualizar' => 'substituir'] as $metodo => $gravacao) {
+        $bloco = blocoMetodoDoController($conteudo, $metodo);
+
+        if ($bloco === null) {
+            continue;
+        }
+
+        $novo = $metodo === 'atualizar' ? comRegistroAntigo($bloco) : $bloco;
+
+        // Pegar o arquivo, conferir junto com a validacao e so entao gravar.
+        $novo = inserirDepois($novo, '/(\$dados = \[\n(?:[^\n]*\n)*?[ \t]*\];\n)/', trechoDeArquivos($arquivos, 'receber', $pasta));
+        $novo = inserirDepois($novo, '/(\$erros = \$this->modelo->validar\([^\n]*\n)/', trechoDeArquivos($arquivos, 'conferir', $pasta));
+        $novo = inserirDepois($novo, '/(if \(\$erros !== \[\]\) \{\n(?:[^\n]*\n)*?[ \t]*\}\n)/', trechoDeArquivos($arquivos, $gravacao, $pasta));
+
+        $conteudo = str_replace($bloco, $novo, $conteudo);
+    }
+
+    $bloco = blocoMetodoDoController($conteudo, 'excluir');
+
+    if ($bloco === null) {
+        return $conteudo;
+    }
+
+    $novo = $bloco;
+
+    if (!str_contains($novo, '$registro = $this->modelo->buscar($id);')) {
+        $novo = str_replace(
+            '        if (!$this->modelo->excluir($id)) {',
+            "        \$registro = \$this->modelo->buscar(\$id);\n\n        if (!\$this->modelo->excluir(\$id)) {",
+            $novo
+        );
+    }
+
+    $novo = inserirDepois(
+        $novo,
+        '/(if \(!\$this->modelo->excluir\(\$id\)\) \{\n(?:[^\n]*\n)*?[ \t]*\}\n)/',
+        trechoDeArquivos($arquivos, 'apagar', $pasta)
+    );
+
+    return str_replace($bloco, $novo, $conteudo);
+}
+
+/**
+ * Tira do controller o tratamento de upload dos campos que sairam.
+ *
+ * Se ainda restar outro campo de arquivo, a estrutura em volta (o $registro
+ * do atualizar(), o import) fica como esta — ela continua sendo usada.
+ */
+function controllerSemArquivos(string $conteudo, array $campos): string
+{
+    foreach ($campos as [$nome]) {
+        $var = preg_quote('$' . variavelDoArquivo($nome), '/');
+
+        $conteudo = (string) preg_replace([
+            // a linha que pega o arquivo
+            "/^[ \t]*{$var} = \\\$this->(?:imagem|arquivo)\([^\n]*\n/m",
+            // os blocos "if (\$arquivoX !== null ...) { ... }"
+            "/^[ \t]*if \({$var} !== null[^\n]*\{\n(?:[^\n]*\n)*?[ \t]*\}\n/m",
+            // e o apagar do excluir()
+            "/^[ \t]*Arquivo::apagar\(\\\$registro\['" . preg_quote($nome, '/') . "'\][^\n]*\n/m",
+        ], '', $conteudo);
+    }
+
+    // Sobrou algum campo de arquivo? Entao a estrutura continua necessaria.
+    if (preg_match('/\$this->(?:imagem|arquivo)\(/', $conteudo)) {
+        return juntarLinhasEmBranco(limparComentariosDeArquivo($conteudo));
+    }
+
+    $conteudo = semRegistroAntigo($conteudo);
+    $conteudo = (string) preg_replace('/^use Nucleo\\\\Arquivo;\n/m', '', $conteudo, 1);
+
+    return juntarLinhasEmBranco(limparComentariosDeArquivo($conteudo));
+}
+
+/**
+ * Junta as linhas em branco que sobraram no lugar dos trechos removidos.
+ *
+ * Tirar linhas vizinhas deixa buracos de tamanhos diferentes; o controller
+ * gerado nunca tem duas linhas em branco seguidas, entao encostar tudo em
+ * uma so devolve o arquivo ao formato original.
+ */
+function juntarLinhasEmBranco(string $conteudo): string
+{
+    return (string) preg_replace("/\n{3,}/", "\n\n", $conteudo);
+}
+
+/** Os comentarios dos trechos de upload saem junto com o ultimo bloco deles. */
+function limparComentariosDeArquivo(string $conteudo): string
+{
+    $orfaos = [
+        '        // O arquivo so vai para o disco depois que o resto passou.',
+        '        // O arquivo novo substitui o anterior, que sai do disco.',
+        '        // O registro saiu; o arquivo dele nao fica ocupando disco.',
+    ];
+
+    foreach ($orfaos as $comentario) {
+        // So sai quando nao sobrou codigo embaixo dele.
+        $conteudo = (string) preg_replace(
+            '/\n?' . preg_quote($comentario, '/') . '\n(?=\n|[ \t]*\}|[ \t]*\$(?:id|this)\b)/',
+            "\n",
+            $conteudo
+        );
+    }
+
+    return $conteudo;
+}
+
+/** O atualizar() passa a carregar o registro antigo, para saber o arquivo atual. */
+function comRegistroAntigo(string $bloco): string
+{
+    return str_replace(
+        "        if (!\$this->modelo->existe(\$id)) {\n            \$this->naoEncontrado();\n        }",
+        "        \$registro = \$this->modelo->buscar(\$id);\n\n        if (\$registro === null) {\n            \$this->naoEncontrado();\n        }",
+        $bloco
+    );
+}
+
+/** Caminho inverso: sem arquivo, basta saber se o registro existe. */
+function semRegistroAntigo(string $conteudo): string
+{
+    foreach (['atualizar', 'excluir'] as $metodo) {
+        $bloco = blocoMetodoDoController($conteudo, $metodo);
+
+        if ($bloco === null) {
+            continue;
+        }
+
+        $novo = str_replace(
+            "        \$registro = \$this->modelo->buscar(\$id);\n\n        if (\$registro === null) {\n            \$this->naoEncontrado();\n        }",
+            "        if (!\$this->modelo->existe(\$id)) {\n            \$this->naoEncontrado();\n        }",
+            $bloco
+        );
+
+        $novo = (string) preg_replace(
+            "/^[ \t]*\\\$registro = \\\$this->modelo->buscar\(\\\$id\);\n\n(?=[ \t]*if \(!)/m",
+            '',
+            $novo,
+            1
+        );
+
+        $conteudo = str_replace($bloco, $novo, $conteudo);
+    }
+
+    return $conteudo;
+}
+
+/** O trecho de upload usa Arquivo::apagar(), entao o import precisa existir. */
+function comImportacaoDeArquivo(string $conteudo): string
+{
+    if (preg_match('/^use\s+Nucleo\\Arquivo;/m', $conteudo)) {
+        return $conteudo;
+    }
+
+    return (string) preg_replace(
+        '/^(use\s+Modelos\\\\\w+;)$/m',
+        "$1\nuse Nucleo\\Arquivo;",
+        $conteudo,
+        1
+    );
+}
+
+/** Insere um trecho logo depois do que o padrao encontrar. */
+function inserirDepois(string $texto, string $padrao, string $trecho): string
+{
+    if ($trecho === '') {
+        return $texto;
+    }
+
+    return (string) preg_replace(
+        $padrao,
+        '$1' . preg_quote_replace($trecho),
+        $texto,
+        1
+    );
+}
+
+/**
+ * Os "$dados = [...]" do salvar() e do atualizar() ganham o campo novo.
+ * Mesmo criterio do auth:install, que ja fazia isso com email e senha.
+ */
+function dadosComCampos(string $conteudo, array $campos): ?string
+{
+    $blocos = 0;
+
+    $novo = preg_replace_callback(
+        '/^([ \t]*)\$dados = \[\R((?:[ \t]+.*\$this->post\(.*\R)+)\1\];/m',
+        function (array $m) use (&$blocos, $campos): string {
+            $blocos++;
+
+            $linhas = $m[2];
+            $recuo  = preg_match('/^[ \t]+/', $linhas, $r) ? $r[0] : $m[1] . '    ';
+
+            foreach ($campos as [$nome, $tipo, $relacao]) {
+                // Campo de arquivo nao vem do $_POST: quem cuida dele e a
+                // classe Nucleo\Arquivo, mais abaixo no mesmo metodo.
+                if ($relacao === null && in_array($tipo, TIPOS_ARQUIVO, true)) {
+                    continue;
+                }
+
+                if (!preg_match("/['\"]" . preg_quote($nome, '/') . "['\"]\s*=>/", $linhas)) {
+                    $linhas .= "{$recuo}'{$nome}' => \$this->post('{$nome}'),\n";
+                }
+            }
+
+            return $m[1] . "\$dados = [\n" . $linhas . $m[1] . '];';
+        },
+        $conteudo
+    );
+
+    return $blocos > 0 ? (string) $novo : null;
+}
+
+/** Tira o campo dos "$dados = [...]" do controller. */
+function dadosSemCampos(string $conteudo, array $campos): ?string
+{
+    $novo = $conteudo;
+
+    foreach ($campos as [$nome]) {
+        $novo = (string) preg_replace(
+            "/^[ \t]*'" . preg_quote($nome, '/') . "'\s*=>\s*\\\$this->post\('"
+                . preg_quote($nome, '/') . "'\),\n/m",
+            '',
+            $novo
+        );
+    }
+
+    return $novo;
+}
+
+/**
+ * O relatorio() ganha o filtro do campo novo e a coluna na tabela do PDF.
+ * Sem CRUD com relatorio o metodo simplesmente nao existe: nesse caso o
+ * conteudo volta como estava.
+ */
+function relatorioComCampos(string $conteudo, array $campos): string
+{
+    $bloco = blocoMetodoDoController($conteudo, 'relatorio');
+
+    if ($bloco === null) {
+        return $conteudo;
+    }
+
+    $alterado = $bloco;
+
+    // 1. Os filtros, logo antes da montagem do SELECT.
+    $filtros = '';
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        if (str_contains($alterado, "\$this->get('{$nome}')")) {
+            continue;
+        }
+
+        $filtros .= filtroRelatorioGerado($nome, $tipo, $relacao);
+    }
+
+    if ($filtros !== '') {
+        $alterado = (string) preg_replace(
+            "/^[ \t]*\\\$sql = 'SELECT \* FROM '/m",
+            preg_quote_replace($filtros) . '$0',
+            $alterado,
+            1
+        );
+    }
+
+    // 2. A lista de colunas que o PDF imprime.
+    $alterado = (string) preg_replace_callback(
+        '/(RelatorioPdf::conteudo\(\s*[^,]+,\s*\[)([^\]]*)(\])/',
+        function (array $m) use ($campos): string {
+            $lista = trim($m[2]);
+
+            foreach ($campos as [$nome]) {
+                if (preg_match("/'" . preg_quote($nome, '/') . "'/", $lista)) {
+                    continue;
+                }
+
+                $lista = $lista === '' ? "'{$nome}'" : $lista . ", '{$nome}'";
+            }
+
+            return $m[1] . $lista . $m[3];
+        },
+        $alterado,
+        1
+    );
+
+    return str_replace($bloco, $alterado, $conteudo);
+}
+
+/** Tira o filtro e a coluna do relatorio(). */
+function relatorioSemCampos(string $conteudo, array $campos): string
+{
+    $bloco = blocoMetodoDoController($conteudo, 'relatorio');
+
+    if ($bloco === null) {
+        return $conteudo;
+    }
+
+    $alterado = $bloco;
+
+    foreach ($campos as [$nome]) {
+        $escapado = preg_quote($nome, '/');
+
+        $alterado = (string) preg_replace(
+            "/^[ \t]*\\\$filtro = \\\$this->get\('{$escapado}'\);\n[ \t]*if \([^\n]*\n(?:[^\n]*\n)*?[ \t]*\}\n\n?/m",
+            '',
+            $alterado,
+            1
+        );
+
+        $alterado = (string) preg_replace_callback(
+            '/(RelatorioPdf::conteudo\(\s*[^,]+,\s*\[)([^\]]*)(\])/',
+            function (array $m) use ($nome): string {
+                $itens = array_filter(
+                    array_map('trim', explode(',', $m[2])),
+                    fn (string $item): bool => $item !== '' && trim($item, "'\" ") !== $nome
+                );
+
+                return $m[1] . implode(', ', $itens) . $m[3];
+            },
+            $alterado,
+            1
+        );
+    }
+
+    return str_replace($bloco, $alterado, $conteudo);
+}
+
+// ---------------------------------------------------------------------
+// scaffold:campo - views
+// ---------------------------------------------------------------------
+
+/** O formulario ganha o campo logo antes dos botoes. */
+function formularioComCampos(string $conteudo, array $campos): ?string
+{
+    $blocos = '';
+
+    foreach ($campos as $campo) {
+        if (str_contains($conteudo, 'name="' . $campo[0] . '"')) {
+            continue;
+        }
+
+        $blocos .= campoFormularioGerado($campo);
+    }
+
+    if ($blocos === '') {
+        return $conteudo;
+    }
+
+    $padrao = '/^[ \t]*<\/div>\R[ \t]*<div class="d-flex gap-2 mt-4">/m';
+
+    if (!preg_match($padrao, $conteudo)) {
+        return null;
+    }
+
+    $conteudo = (string) preg_replace_callback($padrao, fn (array $m): string => $blocos . $m[0], $conteudo, 1);
+
+    return formularioComEnctype($conteudo);
+}
+
+/**
+ * Garante o enctype no <form> quando a tela passa a ter campo de arquivo.
+ *
+ * Sem ele o navegador manda so o NOME do arquivo e o $_FILES chega vazio —
+ * o erro mais comum de formulario com upload.
+ */
+function formularioComEnctype(string $conteudo): string
+{
+    if (!str_contains($conteudo, 'type="file"') || str_contains($conteudo, 'enctype=')) {
+        return $conteudo;
+    }
+
+    return (string) preg_replace(
+        '/(<form\b[^>]*?)(\s+method="post")/',
+        '$1$2 enctype="multipart/form-data"',
+        $conteudo,
+        1
+    );
+}
+
+/** Tira o enctype quando nao sobrou nenhum campo de arquivo na tela. */
+function formularioSemEnctype(string $conteudo): string
+{
+    if (str_contains($conteudo, 'type="file"')) {
+        return $conteudo;
+    }
+
+    return (string) preg_replace('/\s+enctype="multipart\/form-data"/', '', $conteudo, 1);
+}
+
+/** Tira do formulario o bloco <div> inteiro do campo. */
+function formularioSemCampos(string $conteudo, array $campos): ?string
+{
+    foreach ($campos as [$nome]) {
+        $conteudo = removerBlocoDaView($conteudo, 'name="' . $nome . '"');
+    }
+
+    return formularioSemEnctype($conteudo);
+}
+
+/** A listagem ganha a coluna no cabecalho e na linha. */
+function indexComCampos(string $conteudo, array $campos): ?string
+{
+    $cabecalhos = '';
+    $celulas    = '';
+    $novos      = 0;
+
+    foreach ($campos as [$nome, $tipo]) {
+        if (preg_match('/<th>' . preg_quote($nome, '/') . '<\/th>/', $conteudo)) {
+            continue;
+        }
+
+        $novos++;
+        $cabecalhos .= "<th>{$nome}</th>\n";
+        $celulas .= '<td>' . valorNaTela($nome, $tipo) . "</td>\n";
+    }
+
+    if ($novos === 0) {
+        return $conteudo;
+    }
+
+    $cabecalho = '/^([ \t]*)<th class="text-end">Acoes<\/th>/m';
+    $celula    = '/^([ \t]*)<td class="text-end text-nowrap">/m';
+
+    if (!preg_match($cabecalho, $conteudo) || !preg_match($celula, $conteudo)) {
+        return null;
+    }
+
+    $conteudo = (string) preg_replace_callback(
+        $cabecalho,
+        fn (array $m): string => $m[1] . str_replace("\n", "\n" . $m[1], rtrim($cabecalhos, "\n")) . "\n" . $m[0],
+        $conteudo,
+        1
+    );
+
+    $conteudo = (string) preg_replace_callback(
+        $celula,
+        fn (array $m): string => $m[1] . str_replace("\n", "\n" . $m[1], rtrim($celulas, "\n")) . "\n" . $m[0],
+        $conteudo,
+        1
+    );
+
+    return colspanAjustado($conteudo, $novos);
+}
+
+/** Tira a coluna do cabecalho e da linha da listagem. */
+function indexSemCampos(string $conteudo, array $campos): ?string
+{
+    $saiu = 0;
+
+    foreach ($campos as [$nome]) {
+        $antes = $conteudo;
+
+        $conteudo = (string) preg_replace(
+            '/^[ \t]*<th>' . preg_quote($nome, '/') . "<\/th>\n/m",
+            '',
+            $conteudo,
+            1
+        );
+
+        // Casa com qualquer forma de mostrar a coluna: e(), sim_nao(),
+        // miniatura() ou link_arquivo().
+        $conteudo = (string) preg_replace(
+            '/^[ \t]*<td><\?=[^\n]*\$registro\[\'' . preg_quote($nome, '/') . "'\][^\n]*\n/m",
+            '',
+            $conteudo,
+            1
+        );
+
+        if ($antes !== $conteudo) {
+            $saiu++;
+        }
+    }
+
+    return $saiu === 0 ? $conteudo : colspanAjustado($conteudo, -$saiu);
+}
+
+/** Mantem o colspan do "nenhum registro" do tamanho da tabela. */
+function colspanAjustado(string $conteudo, int $diferenca): string
+{
+    return (string) preg_replace_callback(
+        '/colspan="(\d+)"/',
+        fn (array $m): string => 'colspan="' . max(1, (int) $m[1] + $diferenca) . '"',
+        $conteudo,
+        1
+    );
+}
+
+/** A tela de detalhe ganha mais uma linha na lista de definicoes. */
+function verComCampos(string $conteudo, array $campos): ?string
+{
+    $linhas = '';
+    $recuo  = preg_match('/^([ \t]*)<dt\b/m', $conteudo, $dt) ? $dt[1] : '        ';
+
+    foreach ($campos as [$nome, $tipo]) {
+        if (str_contains($conteudo, "\$registro['{$nome}']")) {
+            continue;
+        }
+
+        $linhas .= "{$recuo}<dt class=\"col-sm-3\">{$nome}</dt>\n"
+            . "{$recuo}<dd class=\"col-sm-9\">" . valorNaTela($nome, $tipo, true) . "</dd>\n";
+    }
+
+    if ($linhas === '') {
+        return $conteudo;
+    }
+
+    if (!preg_match('/^[ \t]*<\/dl>/m', $conteudo)) {
+        return null;
+    }
+
+    return (string) preg_replace_callback(
+        '/^[ \t]*<\/dl>/m',
+        fn (array $m): string => $linhas . $m[0],
+        $conteudo,
+        1
+    );
+}
+
+/** Tira o <dt>/<dd> do campo da tela de detalhe. */
+function verSemCampos(string $conteudo, array $campos): ?string
+{
+    foreach ($campos as [$nome]) {
+        $conteudo = (string) preg_replace(
+            '/^[ \t]*<dt[^\n]*>' . preg_quote($nome, '/') . "<\/dt>\n[ \t]*<dd[^\n]*\n/m",
+            '',
+            $conteudo,
+            1
+        );
+    }
+
+    return $conteudo;
+}
+
+/**
+ * Recorta da view o <div> que contem uma marca, do <div> de abertura ate o
+ * </div> que fecha ele — e como os campos do formulario sao gerados.
+ */
+function removerBlocoDaView(string $conteudo, string $marca): string
+{
+    $posicao = strpos($conteudo, $marca);
+
+    if ($posicao === false) {
+        return $conteudo;
+    }
+
+    $abertura = strrpos(substr($conteudo, 0, $posicao), '<div class="col');
+
+    if ($abertura === false) {
+        return $conteudo;
+    }
+
+    $inicio = strrpos(substr($conteudo, 0, $abertura), "\n");
+    $inicio = $inicio === false ? 0 : $inicio + 1;
+
+    // Anda pelo bloco contando <div> e </div> ate o que fecha a abertura.
+    $nivel  = 0;
+    $cursor = $abertura;
+    $tamanho = strlen($conteudo);
+
+    while ($cursor < $tamanho) {
+        $proximoAbre  = strpos($conteudo, '<div', $cursor);
+        $proximoFecha = strpos($conteudo, '</div>', $cursor);
+
+        if ($proximoFecha === false) {
+            return $conteudo;
+        }
+
+        if ($proximoAbre !== false && $proximoAbre < $proximoFecha) {
+            $nivel++;
+            $cursor = $proximoAbre + 4;
+
+            continue;
+        }
+
+        $nivel--;
+        $cursor = $proximoFecha + 6;
+
+        if ($nivel === 0) {
+            break;
+        }
+    }
+
+    // Leva junto a linha em branco que separa um campo do outro.
+    $fim = $cursor;
+
+    while ($fim < $tamanho && ($conteudo[$fim] === "\n" || $conteudo[$fim] === "\r")) {
+        $fim++;
+    }
+
+    return substr($conteudo, 0, $inicio) . substr($conteudo, $fim);
+}
+
+// ---------------------------------------------------------------------
+// scaffold:campo - testes gerados
+// ---------------------------------------------------------------------
+
+/**
+ * Os testes gerados recriam a tabela com as colunas da epoca do scaffold e
+ * postam um array de dados fixo. Sem acertar os dois, acrescentar um campo
+ * deixaria a suite vermelha na hora.
+ */
+function testeComCampos(string $conteudo, string $tabela, array $campos, array $colunas, bool $remover): ?string
+{
+    $principal = campoPrincipal($colunas);
+
+    if ($principal === null) {
+        return null;
+    }
+
+    if ($remover) {
+        $novo = testeSemTabelasPai($conteudo, $campos, $colunas);
+        $novo = removerEmListasDeDados($novo, $campos);
+
+        return tabelaDoTesteComCampos($novo, $tabela, $campos, true);
+    }
+
+    $novo = testeComTabelasPai($conteudo, $tabela, $campos);
+    $novo = tabelaDoTesteComCampos($novo, $tabela, $campos, false);
+
+    if ($novo === null) {
+        return null;
+    }
+
+    $linhas      = [];
+    $atualizadas = [];
+
+    foreach ($campos as $campo) {
+        $linhas[]      = "'{$campo[0]}' => " . valorNoTeste($campo) . ',';
+        $atualizadas[] = "'{$campo[0]}' => " . valorNoTeste($campo, true) . ',';
+    }
+
+    // O array que o teste usa no atualizar() leva os valores "depois", para
+    // o arquivo ficar igual ao que o scaffold:crud geraria com o campo novo.
+    $depois = valorNoTeste([$principal, ...$colunas[$principal]], true);
+
+    return acrescentarEmListasDeDados($novo, $linhas, $atualizadas, $principal, $depois);
+}
+
+/** Primeira coluna depois do id: e ela que aparece em todo array de dados. */
+function campoPrincipal(array $colunas): ?string
+{
+    foreach (array_keys($colunas) as $nome) {
+        if ($nome !== 'id') {
+            return $nome;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Acrescenta (ou tira) colunas do CREATE TABLE que o teste monta em
+ * preparar(). Generaliza o que o auth:install ja fazia com email e senha.
+ */
+function tabelaDoTesteComCampos(string $conteudo, string $tabela, array $campos, bool $remover): ?string
+{
+    $nome   = preg_quote($tabela, '/');
+    $padrao = "/('{$nome}'\s*=>\s*\"CREATE TABLE {$nome} \(\R)(.*?)(\R[ \t]*\)\",)/s";
+
+    if (!preg_match($padrao, $conteudo)) {
+        // Um teste que nao recria a tabela nao precisa de ajuste nenhum.
+        return $conteudo;
+    }
+
+    return (string) preg_replace_callback($padrao, function (array $m) use ($campos, $tabela, $remover): string {
+        $recuo      = preg_match('/^[ \t]*/', $m[2], $r) ? $r[0] : '';
+        $definicoes = array_map('trim', explode(",\n", str_replace("\r\n", "\n", $m[2])));
+
+        if ($remover) {
+            foreach ($campos as [$coluna]) {
+                $definicoes = array_values(array_filter(
+                    $definicoes,
+                    fn (string $definicao): bool => !preg_match('/^`?' . preg_quote($coluna, '/') . '`?\b/i', $definicao)
+                        && !preg_match('/\(\s*`?' . preg_quote($coluna, '/') . '`?\s*\)/i', $definicao)
+                ));
+            }
+
+            return $m[1] . $recuo . implode(",\n{$recuo}", $definicoes) . $m[3];
+        }
+
+        $novas      = [];
+        $restricoes = [];
+
+        foreach ($campos as [$coluna, $tipo, $relacao]) {
+            if (preg_grep('/^`?' . preg_quote($coluna, '/') . '`?\b/i', $definicoes) !== []) {
+                continue;
+            }
+
+            $novas[] = "{$coluna} " . tipoSql($tipo) . ' NULL';
+
+            if ($relacao !== null) {
+                $restricoes[] = "CONSTRAINT fk_{$tabela}_{$coluna} FOREIGN KEY ({$coluna}) REFERENCES {$relacao}(id)";
+            }
+        }
+
+        // Coluna nunca depois de CONSTRAINT: e assim que se le um CREATE TABLE.
+        $primeiraRestricao = count($definicoes);
+
+        foreach ($definicoes as $indice => $definicao) {
+            if (preg_match('/^CONSTRAINT\b/i', $definicao)) {
+                $primeiraRestricao = $indice;
+                break;
+            }
+        }
+
+        array_splice($definicoes, $primeiraRestricao, 0, $novas);
+
+        return $m[1] . $recuo . implode(",\n{$recuo}", array_merge($definicoes, $restricoes)) . $m[3];
+    }, $conteudo, 1);
+}
+
+/** O teste precisa da tabela pai e dos ids que o <select> vai usar. */
+function testeComTabelasPai(string $conteudo, string $tabela, array $campos): string
+{
+    foreach (relacoesUnicas($campos) as $campo) {
+        $pai = $campo[2];
+
+        if ($pai === $tabela || str_contains($conteudo, "'{$pai}' => 'CREATE TABLE {$pai}")) {
+            continue;
+        }
+
+        $conteudo = (string) preg_replace_callback(
+            "/^([ \t]*)'" . preg_quote($tabela, '/') . "'\s*=>\s*\"CREATE TABLE/m",
+            fn (array $m): string => $m[1] . "'{$pai}' => 'CREATE TABLE {$pai} "
+                . "(id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(255) NULL)',\n" . $m[0],
+            $conteudo,
+            1
+        );
+    }
+
+    foreach (relacoesUnicas($campos) as $campo) {
+        if (str_contains($conteudo, "\$this->idsRelacoes['{$campo[0]}']")) {
+            continue;
+        }
+
+        $conteudo = comIdsDaRelacao($conteudo, idsDasRelacoes([$campo]));
+    }
+
+    // No teste do model, a relacao ainda ganha as asercoes do <select>.
+    $assercoes = assercoesDeRelacaoGeradas($campos);
+
+    if ($assercoes !== '' && str_contains($conteudo, '$id = $this->modelo->criar($dados);')) {
+        $novas = '';
+
+        foreach (explode("\n\n", rtrim($assercoes, "\n")) as $bloco) {
+            if ($bloco !== '' && !str_contains($conteudo, trim(explode("\n", $bloco)[0]))) {
+                $novas .= $bloco . "\n\n";
+            }
+        }
+
+        $conteudo = str_replace(
+            '        $id = $this->modelo->criar($dados);',
+            $novas . '        $id = $this->modelo->criar($dados);',
+            $conteudo
+        );
+    }
+
+    return $conteudo;
+}
+
+/**
+ * Encaixa o trecho que popula a tabela pai dentro do preparar().
+ *
+ * Quando ja existe outra relacao, o trecho novo entra colado no dela; se for
+ * a primeira, entra depois do recriarTabelas() — nos dois casos com o mesmo
+ * espacamento que o scaffold:crud produziria.
+ */
+function comIdsDaRelacao(string $conteudo, string $ids): string
+{
+    $ultima = strrpos($conteudo, '$this->idsRelacoesAtualizadas[');
+
+    if ($ultima !== false) {
+        $fimDaLinha = strpos($conteudo, "\n", $ultima);
+        $corte      = $fimDaLinha === false ? strlen($conteudo) : $fimDaLinha;
+
+        return substr($conteudo, 0, $corte) . $ids . substr($conteudo, $corte);
+    }
+
+    return (string) preg_replace(
+        '/(\$this->recriarTabelas\(\[[\s\S]*?\n[ \t]*\]\);)\n+/',
+        '$1' . "\n" . preg_quote_replace($ids) . "\n\n",
+        $conteudo,
+        1
+    );
+}
+
+/** Desfaz o testeComTabelasPai(). */
+function testeSemTabelasPai(string $conteudo, array $campos, array $colunas): string
+{
+    foreach ($campos as [$nome, , $relacao]) {
+        if ($relacao === null) {
+            continue;
+        }
+
+        $conteudo = (string) preg_replace(
+            "/^[ \t]*\\\$this->idsRelacoes(?:Atualizadas)?\['" . preg_quote($nome, '/') . "'\][^\n]*\n/m",
+            '',
+            $conteudo
+        );
+
+        if (outraColunaUsaRelacao($colunas, $relacao, $campos)) {
+            continue;
+        }
+
+        $conteudo = (string) preg_replace(
+            "/^[ \t]*'" . preg_quote($relacao, '/') . "'\s*=>\s*'CREATE TABLE[^\n]*\n/m",
+            '',
+            $conteudo,
+            1
+        );
+
+        $conteudo = (string) preg_replace(
+            '/^[ \t]*Database::conexao\(\)->exec\("INSERT INTO ' . preg_quote($relacao, '/') . "[^\n]*\n/m",
+            '',
+            $conteudo,
+            1
+        );
+
+        $conteudo = (string) preg_replace(
+            '/^[ \t]*\$opcoes = \$this->modelo->' . preg_quote($relacao, '/') . "\(\);\n"
+                . '[ \t]*\$this->assertTotal\(2, \$opcoes\);\n'
+                . "[ \t]*\\\$this->assertVerdadeiro\(in_array[^\n]*\n\n?/m",
+            '',
+            $conteudo,
+            1
+        );
+    }
+
+    return $conteudo;
+}
+
+/**
+ * Acrescenta linhas em todos os arrays de dados do teste.
+ *
+ * Um "array de dados" e uma sequencia de linhas 'campo' => valor, — e o que
+ * o teste passa para criar(), para postar() e para validar(). A sequencia
+ * que contem o campo principal e sempre uma delas.
+ */
+function acrescentarEmListasDeDados(
+    string $conteudo,
+    array $novas,
+    array $atualizadas,
+    string $principal,
+    string $depois
+): string {
+    return percorrerListasDeDados(
+        $conteudo,
+        $principal,
+        function (array $bloco, string $abertura) use ($novas, $atualizadas, $principal, $depois): array {
+            // A lista de filtros do relatorio nao e um registro: acrescentar
+            // campos ali so estreitaria a busca do teste sem motivo.
+            if (str_contains($abertura, 'relatorio')) {
+                return $bloco;
+            }
+
+            $recuo = preg_match('/^[ \t]*/', $bloco[0], $r) ? $r[0] : '            ';
+
+            // Reconhece o array do atualizar() pelo valor do campo principal.
+            $linhaPrincipal = preg_grep("/^[ \t]*'" . preg_quote($principal, '/') . "'\s*=>/", $bloco);
+            $ehAtualizacao  = $linhaPrincipal !== [] && str_contains(reset($linhaPrincipal), $depois);
+
+            foreach ($ehAtualizacao ? $atualizadas : $novas as $linha) {
+                $campo = (string) preg_replace("/^'(\w+)'.*$/", '$1', $linha);
+
+                if (preg_grep("/^[ \t]*'" . preg_quote($campo, '/') . "'\s*=>/", $bloco) !== []) {
+                    continue;
+                }
+
+                $bloco[] = $recuo . $linha;
+            }
+
+            return $bloco;
+        }
+    );
+}
+
+/** Tira as linhas do campo de todos os arrays de dados do teste. */
+function removerEmListasDeDados(string $conteudo, array $campos): string
+{
+    foreach ($campos as [$nome]) {
+        $conteudo = (string) preg_replace(
+            "/^[ \t]*'" . preg_quote($nome, '/') . "'\s*=>\s*(?!['\"]CREATE TABLE)[^\n]*,\n/m",
+            '',
+            $conteudo
+        );
+    }
+
+    return $conteudo;
+}
+
+/**
+ * Encontra cada sequencia de linhas "'campo' => valor," que contenha o
+ * campo principal e entrega a sequencia — com a linha que abriu o array —
+ * para a funcao decidir o que muda.
+ */
+function percorrerListasDeDados(string $conteudo, string $principal, callable $alterar): string
+{
+    $linhas    = explode("\n", $conteudo);
+    $resultado = [];
+    $bloco     = [];
+    $achou     = false;
+    $abertura  = '';
+
+    $fechar = function () use (&$bloco, &$achou, &$abertura, &$resultado, $alterar): void {
+        if ($bloco === []) {
+            return;
+        }
+
+        $resultado = array_merge($resultado, $achou ? $alterar($bloco, $abertura) : $bloco);
+        $bloco     = [];
+        $achou     = false;
+    };
+
+    foreach ($linhas as $linha) {
+        if (preg_match("/^[ \t]*'\w+'\s*=>\s*.+,$/", $linha)) {
+            $bloco[] = $linha;
+
+            if (preg_match("/^[ \t]*'" . preg_quote($principal, '/') . "'\s*=>/", $linha)) {
+                $achou = true;
+            }
+
+            continue;
+        }
+
+        $fechar();
+
+        // Guarda a linha que abre o array: e ela que diz para que ele serve.
+        $abertura    = $linha;
+        $resultado[] = $linha;
+    }
+
+    $fechar();
+
+    return implode("\n", $resultado);
+}
+
+/**
+ * Outros testes gerados que montam a mesma tabela — hoje, o do auth:install.
+ *
+ * @param array<string,string> $jaTratados arquivos que o comando ja alterou
+ * @return list<string>
+ */
+function testesQueRecriamATabela(string $tabela, array $jaTratados): array
+{
+    $marca      = "'{$tabela}' => \"CREATE TABLE {$tabela} (";
+    $encontrados = [];
+
+    foreach (['/testes/controllers/*.php', '/testes/modelos/*.php'] as $padrao) {
+        foreach (glob(CAMINHO_RAIZ . $padrao) ?: [] as $caminho) {
+            if (in_array($caminho, $jaTratados, true)) {
+                continue;
+            }
+
+            if (str_contains(lerArquivo($caminho), $marca)) {
+                $encontrados[] = $caminho;
+            }
+        }
+    }
+
+    return $encontrados;
+}
+
+/**
+ * Acerta um teste que so recria a tabela de passagem.
+ *
+ * Diferente dos testes do recurso, este nao tem as propriedades $idsRelacoes:
+ * a chave estrangeira aponta para o primeiro registro da tabela pai, criado
+ * aqui mesmo, e o id vai literal no array de dados.
+ */
+function testeExtraComCampos(string $conteudo, string $tabela, array $campos, array $colunas, bool $remover): ?string
+{
+    $principal = campoPrincipal($colunas);
+
+    if ($principal === null) {
+        return null;
+    }
+
+    $novo = tabelaDoTesteComCampos($conteudo, $tabela, $campos, $remover);
+
+    if ($novo === null) {
+        return null;
+    }
+
+    foreach (relacoesUnicas($campos) as $campo) {
+        $pai = $campo[2];
+
+        if ($remover) {
+            if (outraColunaUsaRelacao($colunas, $pai, $campos)) {
+                continue;
+            }
+
+            $novo = (string) preg_replace(
+                ["/^[ \t]*'" . preg_quote($pai, '/') . "'\s*=>\s*'CREATE TABLE[^\n]*\n/m",
+                 '/^[ \t]*Database::conexao\(\)->exec\("INSERT INTO ' . preg_quote($pai, '/') . "[^\n]*\n\n?/m"],
+                '',
+                $novo
+            );
+
+            continue;
+        }
+
+        if ($pai === $tabela || str_contains($novo, "'{$pai}' => 'CREATE TABLE {$pai}")) {
+            continue;
+        }
+
+        $novo = (string) preg_replace_callback(
+            "/^([ \t]*)'" . preg_quote($tabela, '/') . "'\s*=>\s*\"CREATE TABLE/m",
+            fn (array $m): string => $m[1] . "'{$pai}' => 'CREATE TABLE {$pai} "
+                . "(id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(255) NULL)',\n" . $m[0],
+            $novo,
+            1
+        );
+
+        $novo = (string) preg_replace(
+            '/(\$this->recriarTabelas\(\[[\s\S]*?\n[ \t]*\]\);)\n+/',
+            '$1' . "\n\n        Database::conexao()->exec(\"INSERT INTO {$pai} (nome) VALUES ('Opcao 1')\");\n\n",
+            $novo,
+            1
+        );
+    }
+
+    if ($remover) {
+        return removerEmListasDeDados($novo, $campos);
+    }
+
+    $linhas = [];
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        // Sem $idsRelacoes aqui: o pai acabou de ser recriado, entao o
+        // primeiro registro dele e sempre o id 1.
+        $valor = $relacao !== null ? '1' : var_export(valorTeste($tipo, false, $nome), true);
+
+        $linhas[] = "'{$nome}' => {$valor},";
+    }
+
+    return acrescentarEmListasDeDados($novo, $linhas, $linhas, $principal, "\x00sem-atualizacao");
+}
+
+// ---------------------------------------------------------------------
+// scaffold:campo - esquema e banco
+// ---------------------------------------------------------------------
+
+/**
+ * Reescreve o CREATE TABLE em banco/esquema.sql com as colunas novas,
+ * mantendo as CONSTRAINT no fim e preservando ENGINE e CHARSET do original.
+ */
+function esquemaComCampos(string $tabela, array $campos, bool $remover): void
+{
+    $arquivo  = arquivoEsquema();
+    $conteudo = is_file($arquivo) ? (string) file_get_contents($arquivo) : '';
+
+    if (!preg_match(padraoCreateTable($tabela), $conteudo, $bloco)) {
+        throw new RuntimeException(
+            "A tabela \"{$tabela}\" nao esta em " . caminhoRelativo($arquivo) . '.'
+        );
+    }
+
+    $original = $bloco[0];
+    $abre     = strpos($original, '(');
+    $fecha    = strrpos($original, ')');
+
+    if ($abre === false || $fecha === false || $fecha <= $abre) {
+        throw new RuntimeException("Nao consegui interpretar o CREATE TABLE de \"{$tabela}\".");
+    }
+
+    $definicoes = array_values(array_filter(
+        array_map('trim', explode(",\n", substr($original, $abre + 1, $fecha - $abre - 1))),
+        fn (string $definicao): bool => $definicao !== ''
+    ));
+
+    $colunas    = [];
+    $restricoes = [];
+
+    foreach ($definicoes as $definicao) {
+        if (preg_match('/^(CONSTRAINT|FOREIGN|PRIMARY|UNIQUE|KEY|INDEX)\b/i', $definicao)) {
+            $restricoes[] = $definicao;
+
+            continue;
+        }
+
+        $colunas[] = $definicao;
+    }
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        $escapado = preg_quote($nome, '/');
+
+        if ($remover) {
+            $colunas = array_values(array_filter(
+                $colunas,
+                fn (string $coluna): bool => !preg_match('/^`?' . $escapado . '`?\b/i', $coluna)
+            ));
+
+            $restricoes = array_values(array_filter(
+                $restricoes,
+                fn (string $restricao): bool => !preg_match('/\(\s*`?' . $escapado . '`?\s*\)/i', $restricao)
+            ));
+
+            continue;
+        }
+
+        if (preg_grep('/^`?' . $escapado . '`?\b/i', $colunas) !== []) {
+            continue;
+        }
+
+        $colunas[] = "{$nome} " . tipoSql($tipo) . ' NULL';
+
+        if ($relacao !== null) {
+            $restricoes[] = "CONSTRAINT fk_{$tabela}_{$nome} FOREIGN KEY ({$nome}) REFERENCES {$relacao}(id)";
+        }
+    }
+
+    $novo = substr($original, 0, $abre + 1) . "\n    "
+        . implode(",\n    ", array_merge($colunas, $restricoes)) . "\n"
+        . substr($original, $fecha);
+
+    file_put_contents($arquivo, str_replace($original, $novo, $conteudo), LOCK_EX);
+}
+
+/** Cria as colunas (e as chaves estrangeiras) na tabela que ja esta no banco. */
+function bancoComCampos(string $tabela, array $campos): void
+{
+    $pdo        = Database::conexao();
+    $existentes = colunasDaTabela($tabela);
+
+    foreach ($campos as [$nome, $tipo, $relacao]) {
+        if (!in_array($nome, $existentes, true)) {
+            // Coluna nova entra como NULL: a tabela pode ja ter registros.
+            $pdo->exec("ALTER TABLE `{$tabela}` ADD COLUMN `{$nome}` " . tipoSql($tipo) . ' NULL');
+        }
+
+        if ($relacao !== null && chaveEstrangeiraDaColuna($tabela, $nome) === null) {
+            $pdo->exec(
+                "ALTER TABLE `{$tabela}` ADD CONSTRAINT `fk_{$tabela}_{$nome}` "
+                . "FOREIGN KEY (`{$nome}`) REFERENCES `{$relacao}`(id)"
+            );
+        }
+    }
+}
+
+/** Apaga as colunas do banco (a chave estrangeira sai primeiro). */
+function bancoSemCampos(string $tabela, array $campos): void
+{
+    $pdo        = Database::conexao();
+    $existentes = colunasDaTabela($tabela);
+
+    foreach ($campos as [$nome]) {
+        $chave = chaveEstrangeiraDaColuna($tabela, $nome);
+
+        if ($chave !== null) {
+            $pdo->exec("ALTER TABLE `{$tabela}` DROP FOREIGN KEY `{$chave}`");
+        }
+
+        if (in_array($nome, $existentes, true)) {
+            $pdo->exec("ALTER TABLE `{$tabela}` DROP COLUMN `{$nome}`");
+        }
+    }
+}
+
+/** Nome da chave estrangeira de uma coluna, ou null se ela nao tiver. */
+function chaveEstrangeiraDaColuna(string $tabela, string $coluna): ?string
+{
+    $consulta = Database::conexao()->prepare(
+        'SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+           AND REFERENCED_TABLE_NAME IS NOT NULL
+         LIMIT 1'
+    );
+
+    $consulta->execute([$tabela, $coluna]);
+
+    $nome = $consulta->fetchColumn();
+
+    return $nome === false ? null : (string) $nome;
+}
+
+// =====================================================================
+// auth:perfis
+// =====================================================================
+
+/**
+ * Da perfis de acesso a uma tela de login.
+ *
+ * "Esta logado" e "pode fazer isso" sao perguntas diferentes. Ate aqui o
+ * framework so respondia a primeira: qualquer conta que entrasse podia tudo.
+ *
+ * O comando escreve a lista em configuracoes/perfis.php, cria a coluna
+ * perfil na tabela das contas e, quando o model tem CRUD, poe a lista no
+ * formulario. Proteger a rota continua sendo uma linha no controller:
+ *
+ *     $this->exigirPerfil('admin');
+ */
+function gerarPerfis(array $argumentos): void
+{
+    [$posicionais, $opcoes] = separarOpcoes($argumentos, ['remover', 'forcar']);
+
+    $remover = array_key_exists('remover', $opcoes);
+
+    if (!$remover && $posicionais === []) {
+        throw new InvalidArgumentException(
+            "Uso: php console.php auth:perfis <perfil1,perfil2,...> [Modelo|prefixo]\n"
+            . "Exemplo: php console.php auth:perfis admin,coordenador,professor\n"
+            . 'Para tirar: php console.php auth:perfis --remover'
+        );
+    }
+
+    $alvo     = $remover ? ($posicionais[0] ?? null) : ($posicionais[1] ?? null);
+    $provider = providerDosPerfis($alvo);
+    $classe   = modeloDoProvider($provider);
+    $tabela   = (new ("Modelos\\" . $classe)())->tabela();
+
+    $perfis = $remover ? [] : interpretarPerfis($posicionais[0]);
+    $campo  = [[Nucleo\Perfis::COLUNA, 'string', null]];
+
+    $arquivoModelo = CAMINHO_MODELOS . "/{$classe}.php";
+    $recurso       = pascal($tabela);
+    $pasta         = strtolower($recurso);
+
+    // -------------------------------------------------------------
+    // 1. Tudo na memoria antes de gravar qualquer coisa.
+    // -------------------------------------------------------------
+    $novos  = [];
+    $avisos = [];
+
+    $modelo = lerArquivo($arquivoModelo);
+
+    $modeloNovo = $remover
+        ? modeloSemPerfil($modelo)
+        : modeloComPerfil($modelo);
+
+    if ($modeloNovo === null) {
+        throw new RuntimeException(
+            'Nao encontrei a propriedade $preenchiveis em ' . caminhoRelativo($arquivoModelo) . '.'
+        );
+    }
+
+    if ($modeloNovo !== $modelo) {
+        $novos[$arquivoModelo] = $modeloNovo;
+    }
+
+    // As telas do CRUD, quando o model tiver um.
+    $telas = [
+        CAMINHO_VIEWS . "/{$pasta}/formulario.php" => $remover
+            ? fn (string $t): string => removerBlocoDaView($t, 'name="' . Nucleo\Perfis::COLUNA . '"')
+            : fn (string $t): ?string => formularioComPerfil($t, $provider),
+        CAMINHO_VIEWS . "/{$pasta}/index.php" => $remover
+            ? fn (string $t): ?string => indexSemCampos($t, $campo)
+            : fn (string $t): ?string => indexComPerfil($t, $provider),
+        CAMINHO_VIEWS . "/{$pasta}/ver.php" => $remover
+            ? fn (string $t): ?string => verSemCampos($t, $campo)
+            : fn (string $t): ?string => verComPerfil($t, $provider),
+        CAMINHO_CONTROLLERS . "/{$recurso}Controller.php" => $remover
+            ? fn (string $t): ?string => dadosSemCampos($t, $campo)
+            : fn (string $t): ?string => dadosComCampos($t, $campo),
+    ];
+
+    foreach ($telas as $caminho => $alterar) {
+        if (!is_file($caminho)) {
+            continue;
+        }
+
+        $original = lerArquivo($caminho);
+        $novo     = $alterar($original);
+
+        if ($novo === null) {
+            $avisos[] = 'Nao consegui alterar ' . caminhoRelativo($caminho) . ' — ajuste a mao.';
+        } elseif ($novo !== $original) {
+            $novos[$caminho] = $novo;
+        }
+    }
+
+    // Os testes gerados recriam a tabela: a coluna nova precisa entrar la.
+    foreach (testesQueRecriamATabela($tabela, []) as $caminho) {
+        $original = lerArquivo($caminho);
+        $novo     = tabelaDoTesteComCampos($original, $tabela, $campo, $remover);
+
+        if ($novo !== null && $novo !== $original) {
+            $novos[$caminho] = $novo;
+        }
+    }
+
+    // -------------------------------------------------------------
+    // 2. Tirar perfis apaga a coluna: confirma antes.
+    // -------------------------------------------------------------
+    if ($remover && !array_key_exists('forcar', $opcoes)) {
+        echo "Isto vai APAGAR a coluna " . Nucleo\Perfis::COLUNA . " da tabela {$tabela}.\n";
+
+        if (!confirmar('Continuar?')) {
+            echo "Nada foi alterado.\n";
+
+            return;
+        }
+    }
+
+    // -------------------------------------------------------------
+    // 3. Configuracao, esquema e banco.
+    // -------------------------------------------------------------
+    $esquemas = lerEsquemas();
+
+    try {
+        registrarPerfisNaConfiguracao($provider, $classe, $perfis, $remover);
+
+        esquemaComCampos($tabela, $campo, $remover);
+
+        if ($remover) {
+            bancoSemCampos($tabela, $campo);
+        } else {
+            bancoComCampos($tabela, $campo);
+        }
+    } catch (Throwable $e) {
+        restaurarEsquemas($esquemas);
+
+        throw $e;
+    }
+
+    regravarArquivos($novos);
+
+    // -------------------------------------------------------------
+    // 4. Relatorio
+    // -------------------------------------------------------------
+    $tela = $provider === '' ? '/auth' : '/auth-' . str_replace('_', '-', $provider);
+
+    if ($remover) {
+        echo "Perfis removidos do login {$tela}\n";
+    } else {
+        echo "Perfis do login {$tela} ({$classe}):\n";
+
+        foreach ($perfis as $chave => $rotulo) {
+            printf("  %-18s %s\n", $chave, $rotulo);
+        }
+    }
+
+    echo "\n  ~ configuracoes/perfis.php\n";
+
+    foreach (array_keys($novos) as $caminho) {
+        echo '  ~ ' . caminhoRelativo($caminho) . "\n";
+    }
+
+    echo '  ~ ' . caminhoRelativo(arquivoEsquema()) . "\n";
+    echo "  ~ tabela {$tabela} no banco\n";
+
+    foreach ($avisos as $aviso) {
+        echo "\nAVISO: {$aviso}\n";
+    }
+
+    if ($remover) {
+        return;
+    }
+
+    $primeiro = array_key_first($perfis);
+    $argumento = $provider === '' ? '' : ", '{$provider}'";
+
+    echo "\nProteja as rotas no controller:\n";
+    echo "      \$this->exigirPerfil('{$primeiro}'{$argumento});\n";
+    echo "\nE esconda o que a pessoa nao pode usar, nas views:\n";
+    echo "      <?php if (tem_perfil('{$primeiro}'" . $argumento . ")): ?> ... <?php endif ?>\n";
+    echo "\nNenhuma conta tem perfil ainda. Defina o de cada uma pelo CRUD,\n";
+    echo "ou direto no banco:\n";
+    echo "      UPDATE {$tabela} SET " . Nucleo\Perfis::COLUNA . " = '{$primeiro}' WHERE id = 1;\n";
+
+    if (!is_file(CAMINHO_CONTROLLERS . "/{$recurso}Controller.php")) {
+        echo "\nO model {$classe} nao tem CRUD, entao nao ha formulario para escolher o perfil.\n";
+        echo "Para gerar um: php console.php scaffold:crud {$tabela} nome:string\n";
+    }
+
+    echo "\nPara desfazer: php console.php auth:perfis --remover"
+        . ($provider === '' ? '' : ' ' . $provider) . "\n";
+}
+
+/** Descobre de qual tela de login o comando esta falando. */
+function providerDosPerfis(?string $alvo): string
+{
+    if ($alvo === null || trim($alvo) === '') {
+        return Nucleo\Autenticacao::resolver();
+    }
+
+    $alvo = trim($alvo);
+
+    // Pode vir o prefixo do provider ("professor") ou o nome do model.
+    $comoPrefixo = Nucleo\Autenticacao::normalizar($alvo);
+
+    if (Nucleo\Autenticacao::instalado($comoPrefixo)) {
+        return $comoPrefixo;
+    }
+
+    foreach (Nucleo\Autenticacao::providers() as $provider) {
+        if (strcasecmp(modeloDoProvider($provider), $alvo) === 0) {
+            return $provider;
+        }
+    }
+
+    throw new RuntimeException(
+        "Nao encontrei a tela de login \"{$alvo}\".\n"
+        . 'Instaladas: ' . implode(', ', array_map(
+            fn (string $p): string => Nucleo\Autenticacao::rotaBase($p),
+            Nucleo\Autenticacao::providers()
+        )) . "\n"
+        . 'Para criar uma: php console.php auth:install'
+    );
+}
+
+/** O model usado pela tela de login, lido do proprio controller dela. */
+function modeloDoProvider(string $provider): string
+{
+    $arquivo = CAMINHO_CONTROLLERS . '/' . Nucleo\Autenticacao::controlador($provider) . '.php';
+
+    if (!is_file($arquivo)) {
+        throw new RuntimeException(
+            'Tela de login nao encontrada: ' . caminhoRelativo($arquivo) . "\n"
+            . 'Rode antes: php console.php auth:install'
+        );
+    }
+
+    if (!preg_match('/^use\s+Modelos\\\\(\w+);/m', lerArquivo($arquivo), $achado)) {
+        throw new RuntimeException(
+            'Nao encontrei o "use Modelos\\..." em ' . caminhoRelativo($arquivo) . '.'
+        );
+    }
+
+    return $achado[1];
+}
+
+/**
+ * Le "admin,coordenador" e devolve chave => rotulo.
+ *
+ * @return array<string,string>
+ */
+function interpretarPerfis(string $lista): array
+{
+    $perfis = [];
+
+    foreach (explode(',', $lista) as $bruto) {
+        $chave = strtolower(trim($bruto));
+
+        if ($chave === '') {
+            continue;
+        }
+
+        if (!preg_match('/^[a-z][a-z0-9_]{0,29}$/', $chave)) {
+            throw new InvalidArgumentException(
+                "Perfil invalido: \"{$chave}\".\n"
+                . 'Use letras minusculas, numeros e _, comecando por letra. Ex.: admin, coordenador_geral'
+            );
+        }
+
+        if (isset($perfis[$chave])) {
+            throw new InvalidArgumentException("Perfil repetido: {$chave}.");
+        }
+
+        $perfis[$chave] = ucfirst(str_replace('_', ' ', $chave));
+    }
+
+    if ($perfis === []) {
+        throw new InvalidArgumentException('Informe ao menos um perfil. Ex.: admin,coordenador');
+    }
+
+    return $perfis;
+}
+
+/** Grava (ou tira) o bloco do provider em configuracoes/perfis.php. */
+function registrarPerfisNaConfiguracao(string $provider, string $classe, array $perfis, bool $remover): void
+{
+    $arquivo  = CAMINHO_CONFIGURACOES . '/perfis.php';
+    $conteudo = is_file($arquivo) ? lerArquivo($arquivo) : "<?php\n\nreturn [\n    // auth:perfis\n];\n";
+
+    // Tira o bloco antigo deste provider, se existir.
+    // O \1 amarra o fecha-colchete ao MESMO recuo do abre: sem isso o
+    // padrao pararia no "]," interno, o da lista de perfis.
+    $padrao = "/^([ \t]*)'" . preg_quote($provider, '/') . "'\s*=>\s*\[[\s\S]*?^\\1\],\n/m";
+    $conteudo = (string) preg_replace($padrao, '', $conteudo, 1);
+
+    if (!$remover) {
+        $linhas = ["    '{$provider}' => ["];
+        $linhas[] = "        'modelo' => '{$classe}',";
+        $linhas[] = '        \'perfis\' => [';
+
+        foreach ($perfis as $chave => $rotulo) {
+            $linhas[] = "            '{$chave}' => '" . str_replace("'", "\\'", $rotulo) . "',";
+        }
+
+        $linhas[] = '        ],';
+        $linhas[] = '    ],';
+
+        $bloco = implode("\n", $linhas) . "\n";
+
+        if (str_contains($conteudo, '    // auth:perfis')) {
+            $conteudo = str_replace('    // auth:perfis', $bloco . '    // auth:perfis', $conteudo);
+        } else {
+            $conteudo = (string) preg_replace('/\n\];(\s*)$/', "\n" . $bloco . '];$1', $conteudo, 1);
+        }
+    }
+
+    file_put_contents($arquivo, $conteudo, LOCK_EX);
+
+    // O comando continua rodando depois disso (o model usa Perfis::chaves()
+    // na mensagem final), entao a configuracao em memoria tambem muda.
+    Nucleo\Config::carregar(CAMINHO_CONFIGURACOES);
+}
+
+// ---------------------------------------------------------------------
+// auth:perfis - arquivos
+// ---------------------------------------------------------------------
+
+/** O model ganha a coluna perfil e a regra que limita os valores aceitos. */
+function modeloComPerfil(string $conteudo): ?string
+{
+    $coluna = Nucleo\Perfis::COLUNA;
+    $novo   = preenchiveisComCampos($conteudo, [[$coluna, 'string', null]]);
+
+    if ($novo === null) {
+        return null;
+    }
+
+    $regra = "->dentroDe('{$coluna}', \\Nucleo\\Perfis::chaves())";
+
+    if (str_contains($novo, $regra)) {
+        return $novo;
+    }
+
+    return (string) preg_replace_callback(
+        '/^([ \t]*)->erros\(\);/m',
+        fn (array $m): string => $m[1] . $regra . "\n" . $m[0],
+        $novo,
+        1
+    );
+}
+
+/** Caminho inverso do modeloComPerfil(). */
+function modeloSemPerfil(string $conteudo): ?string
+{
+    $coluna = Nucleo\Perfis::COLUNA;
+    $novo   = preenchiveisSemCampos($conteudo, [[$coluna, 'string', null]]);
+
+    if ($novo === null) {
+        return null;
+    }
+
+    return (string) preg_replace(
+        "/^[ \t]*->\w+\('" . preg_quote($coluna, '/') . "'[^\n]*\n/m",
+        '',
+        $novo
+    );
+}
+
+/** O formulario ganha a lista de perfis, logo antes dos botoes. */
+function formularioComPerfil(string $conteudo, string $provider): ?string
+{
+    $coluna = Nucleo\Perfis::COLUNA;
+
+    if (str_contains($conteudo, 'name="' . $coluna . '"')) {
+        return $conteudo;
+    }
+
+    $padrao = '/^[ \t]*<\/div>\R[ \t]*<div class="d-flex gap-2 mt-4">/m';
+
+    if (!preg_match($padrao, $conteudo)) {
+        return null;
+    }
+
+    return (string) preg_replace_callback(
+        $padrao,
+        fn (array $m): string => campoPerfilGerado($provider) . $m[0],
+        $conteudo,
+        1
+    );
+}
+
+/** O <select> com os perfis configurados. */
+function campoPerfilGerado(string $provider): string
+{
+    $coluna    = Nucleo\Perfis::COLUNA;
+    $argumento = $provider === '' ? '' : "'{$provider}'";
+
+    return strtr(<<<'HTML'
+        <div class="col-md-6">
+            <label class="form-label" for="{{COLUNA}}">{{COLUNA}}</label>
+            <?php $escolhido = (string) antigo('{{COLUNA}}', $registro['{{COLUNA}}'] ?? ''); ?>
+            <select class="form-select <?= tem_erro('{{COLUNA}}') ? 'is-invalid' : '' ?>" id="{{COLUNA}}" name="{{COLUNA}}">
+                <option value="">Sem perfil</option>
+                <?php foreach (Nucleo\Perfis::configurados({{PROVIDER}}) as $chave => $rotulo): ?>
+                    <option value="<?= e($chave) ?>" <?= $escolhido === $chave ? 'selected' : '' ?>><?= e($rotulo) ?></option>
+                <?php endforeach ?>
+            </select>
+            <?php if ($mensagem = erro_de('{{COLUNA}}')): ?><div class="invalid-feedback d-block"><?= e($mensagem) ?></div><?php endif ?>
+        </div>
+
+    HTML, [
+        '{{COLUNA}}'   => $coluna,
+        '{{PROVIDER}}' => $argumento,
+    ]);
+}
+
+/** A listagem ganha a coluna do perfil, com o rotulo legivel. */
+function indexComPerfil(string $conteudo, string $provider): ?string
+{
+    $coluna = Nucleo\Perfis::COLUNA;
+
+    if (preg_match('/<th>' . $coluna . '<\/th>/', $conteudo)) {
+        return $conteudo;
+    }
+
+    $cabecalho = '/^([ \t]*)<th class="text-end">Acoes<\/th>/m';
+    $celula    = '/^([ \t]*)<td class="text-end text-nowrap">/m';
+
+    if (!preg_match($cabecalho, $conteudo) || !preg_match($celula, $conteudo)) {
+        return null;
+    }
+
+    $conteudo = (string) preg_replace_callback(
+        $cabecalho,
+        fn (array $m): string => $m[1] . "<th>{$coluna}</th>\n" . $m[0],
+        $conteudo,
+        1
+    );
+
+    $conteudo = (string) preg_replace_callback(
+        $celula,
+        fn (array $m): string => $m[1] . '<td>' . valorDoPerfil($provider) . "</td>\n" . $m[0],
+        $conteudo,
+        1
+    );
+
+    return colspanAjustado($conteudo, 1);
+}
+
+/** A tela de detalhe ganha a linha do perfil. */
+function verComPerfil(string $conteudo, string $provider): ?string
+{
+    $coluna = Nucleo\Perfis::COLUNA;
+
+    if (str_contains($conteudo, "\$registro['{$coluna}']")) {
+        return $conteudo;
+    }
+
+    if (!preg_match('/^([ \t]*)<\/dl>/m', $conteudo, $fim)) {
+        return null;
+    }
+
+    $recuo = preg_match('/^([ \t]*)<dt\b/m', $conteudo, $dt) ? $dt[1] : $fim[1] . '    ';
+
+    $linha = "{$recuo}<dt class=\"col-sm-3\">{$coluna}</dt>\n"
+        . "{$recuo}<dd class=\"col-sm-9\">" . valorDoPerfil($provider) . "</dd>\n";
+
+    return (string) preg_replace_callback(
+        '/^[ \t]*<\/dl>/m',
+        fn (array $m): string => $linha . $m[0],
+        $conteudo,
+        1
+    );
+}
+
+/** Como o perfil aparece na tela: a chave vira o rotulo configurado. */
+function valorDoPerfil(string $provider): string
+{
+    $coluna    = Nucleo\Perfis::COLUNA;
+    $argumento = $provider === '' ? '' : ", '{$provider}'";
+
+    return "<?= e(rotulo_perfil(\$registro['{$coluna}'] ?? null{$argumento})) ?>";
+}
+
+// =====================================================================
+// scaffold:paginacao
+// =====================================================================
+
+/**
+ * Quebra a listagem em paginas.
+ *
+ * Sem isso o index() traz a tabela inteira: o banco devolve tudo, o PHP
+ * guarda tudo e o navegador desenha tudo. Com trinta registros ninguem
+ * percebe; com trinta mil, a tela nao abre.
+ *
+ * O comando altera o index() do controller e a view index.php, e funciona
+ * antes ou depois do scaffold:pesquisa — os dois se encaixam.
+ */
+function gerarPaginacao(array $argumentos): void
+{
+    [$posicionais, $opcoes] = separarOpcoes($argumentos, ['remover', 'por-pagina']);
+
+    $remover = array_key_exists('remover', $opcoes);
+
+    if ($posicionais === []) {
+        throw new InvalidArgumentException(
+            "Uso: php console.php scaffold:paginacao <tabela> [--por-pagina=N]\n"
+            . "Exemplo: php console.php scaffold:paginacao produtos --por-pagina=15\n"
+            . 'Para tirar: php console.php scaffold:paginacao produtos --remover'
+        );
+    }
+
+    $porPagina = interpretarPorPagina($opcoes);
+
+    $modelo     = resolverModeloRelatorio($posicionais[0]);
+    $tabela     = $modelo['tabela'];
+    $recurso    = pascal($tabela);
+    $pasta      = strtolower($recurso);
+    $controller = CAMINHO_CONTROLLERS . "/{$recurso}Controller.php";
+    $view       = CAMINHO_VIEWS . "/{$pasta}/index.php";
+
+    foreach ([$controller, $view] as $arquivo) {
+        if (!is_file($arquivo)) {
+            throw new RuntimeException(
+                'Arquivo do CRUD nao encontrado: ' . caminhoRelativo($arquivo) . "\n"
+                . "Gere o CRUD antes:\n  php console.php scaffold:crud {$tabela} nome:string"
+            );
+        }
+    }
+
+    $novos = $remover
+        ? [
+            $controller => controllerSemPaginacao(lerArquivo($controller), $controller),
+            $view       => indexSemPaginacao(lerArquivo($view)),
+        ]
+        : [
+            $controller => controllerComPaginacao(lerArquivo($controller), $controller, $porPagina),
+            $view       => indexComPaginacao(lerArquivo($view)),
+        ];
+
+    regravarArquivos($novos);
+
+    if ($remover) {
+        echo "Paginacao removida de /{$pasta}\n";
+        echo '  ~ ' . caminhoRelativo($controller) . "\n";
+        echo '  ~ ' . caminhoRelativo($view) . "\n";
+
+        return;
+    }
+
+    echo "Paginacao criada em /{$pasta}\n";
+    echo '  ~ ' . caminhoRelativo($controller) . "\n";
+    echo '  ~ ' . caminhoRelativo($view) . "\n\n";
+    echo "A listagem passa a mostrar {$porPagina} registros por vez, com a barra de\n";
+    echo "navegacao abaixo da tabela: /{$pasta}?pagina=2\n";
+
+    if (str_contains(lerArquivo($controller), marcadoresPesquisaPhp()[0])) {
+        echo "\nA pesquisa continua valendo: o total de paginas e contado depois do filtro,\n";
+        echo "e trocar de pagina nao perde o que foi digitado.\n";
+    }
+
+    echo "\nPara desfazer: php console.php scaffold:paginacao {$tabela} --remover\n";
+}
+
+/** Le e confere o --por-pagina=N. */
+function interpretarPorPagina(array $opcoes): int
+{
+    if (!isset($opcoes['por-pagina'])) {
+        return Nucleo\Paginacao::PADRAO;
+    }
+
+    $valor = (string) $opcoes['por-pagina'];
+
+    if (!ctype_digit($valor) || (int) $valor < 1) {
+        throw new InvalidArgumentException(
+            "Valor invalido em --por-pagina={$valor}. Informe um numero maior que zero."
+        );
+    }
+
+    if ((int) $valor > Nucleo\Paginacao::MAXIMO) {
+        throw new InvalidArgumentException(
+            '--por-pagina aceita no maximo ' . Nucleo\Paginacao::MAXIMO . ' registros por pagina.'
+        );
+    }
+
+    return (int) $valor;
+}
+
+/** @return array{0:string,1:string} marcadores do trecho gerado no controller */
+function marcadoresPaginacaoPhp(): array
+{
+    return [
+        '        // ----- scaffold:paginacao inicio -----',
+        '        // ----- scaffold:paginacao fim -----',
+    ];
+}
+
+/** @return array{0:string,1:string} marcadores do trecho gerado na view */
+function marcadoresPaginacaoHtml(): array
+{
+    return ['<!-- scaffold:paginacao inicio -->', '<!-- scaffold:paginacao fim -->'];
+}
+
+/**
+ * Faz o index() pedir uma pagina em vez da tabela inteira.
+ *
+ * A chamada muda conforme a tela ja tenha pesquisa ou nao: com pesquisa, o
+ * WHERE ja esta montado em $sql, e e ele que precisa ser paginado — senao o
+ * total de paginas sairia da tabela toda, e nao do resultado do filtro.
+ */
+function controllerComPaginacao(string $conteudo, string $arquivo, int $porPagina): string
+{
+    $antigo = blocoIndexDoController($conteudo, $arquivo);
+
+    // Comeca sempre do index() sem paginacao: rodar de novo com outro
+    // --por-pagina troca o trecho em vez de empilhar dois.
+    $bloco = blocoIndexSemPaginacao($antigo);
+
+    [$inicio, $fim]     = marcadoresPaginacaoPhp();
+    [, $fimDaPesquisa]  = marcadoresPesquisaPhp();
+
+    $comPesquisa = str_contains($bloco, $fimDaPesquisa);
+
+    $chamada = $comPesquisa
+        ? "\$pagina = \$this->modelo->paginarConsulta(\$sql, \$parametros, \$this->get('pagina'), {$porPagina});"
+        : "\$pagina = \$this->modelo->paginar(\$this->get('pagina'), {$porPagina});";
+
+    $trecho = $inicio . "\n        " . $chamada . "\n" . $fim;
+
+    // A listagem passa a vir da pagina.
+    $bloco = (string) preg_replace_callback(
+        "/^([ \t]*)'registros'(\s*)=>[^\n]*\n/m",
+        fn (array $m): string => $m[1] . "'registros'" . $m[2] . "=> \$pagina->registros,\n",
+        $bloco,
+        1,
+        $trocas
+    );
+
+    if ($trocas !== 1) {
+        throw new RuntimeException(
+            'Nao encontrei a linha "\'registros\' => ..." no index() de '
+            . caminhoRelativo($arquivo) . ".\n"
+            . 'Reponha essa linha (ou gere o CRUD de novo) antes de acrescentar a paginacao.'
+        );
+    }
+
+    // E a view recebe a pagina inteira, para desenhar a barra de navegacao.
+    // Ela entra no fim do array: assim o resultado e o mesmo tendo a pesquisa
+    // chegado antes ou depois da paginacao.
+    $bloco = (string) preg_replace_callback(
+        '/(\$this->view\([\s\S]*?\n)([ \t]*)(\]\);)/',
+        // Os itens do array ficam um nivel para dentro do "]);".
+        fn (array $m): string => $m[1] . $m[2] . '    ' . str_pad("'pagina'", 11)
+            . " => \$pagina,\n" . $m[2] . $m[3],
+        $bloco,
+        1
+    );
+
+    if ($comPesquisa) {
+        // Depois do filtro: o $sql precisa estar pronto antes de paginar.
+        return str_replace(
+            $antigo,
+            str_replace($fimDaPesquisa . "\n", $fimDaPesquisa . "\n\n" . $trecho . "\n", $bloco),
+            $conteudo
+        );
+    }
+
+    $bloco = (string) preg_replace(
+        '/(\n+)([ ]*)\$this->view\(/',
+        '${1}' . preg_quote_replace($trecho) . "\n\n\${2}\$this->view(",
+        $bloco,
+        1,
+        $trocas
+    );
+
+    if ($trocas !== 1) {
+        throw new RuntimeException(
+            'O index() de ' . caminhoRelativo($arquivo) . " nao chama \$this->view().\n"
+            . 'Deixe a chamada la (ou gere o CRUD de novo) antes de acrescentar a paginacao.'
+        );
+    }
+
+    return str_replace($antigo, $bloco, $conteudo);
+}
+
+/** Devolve o index() ao estado sem paginacao. */
+function controllerSemPaginacao(string $conteudo, string $arquivo): string
+{
+    $antigo = blocoIndexDoController($conteudo, $arquivo);
+
+    return str_replace($antigo, blocoIndexSemPaginacao($antigo), $conteudo);
+}
+
+/**
+ * Tira do index() tudo que o scaffold:paginacao tinha colocado, devolvendo a
+ * listagem para a forma que ela tinha antes — com ou sem pesquisa.
+ */
+function blocoIndexSemPaginacao(string $bloco): string
+{
+    [$inicio, $fim]    = marcadoresPaginacaoPhp();
+    [, $fimDaPesquisa] = marcadoresPesquisaPhp();
+
+    $bloco = (string) preg_replace(
+        '/\n?' . preg_quote($inicio, '/') . '[\s\S]*?' . preg_quote($fim, '/') . "\n/",
+        '',
+        $bloco,
+        1
+    );
+
+    $fonte = str_contains($bloco, $fimDaPesquisa)
+        ? '$this->modelo->consultar($sql, $parametros),'
+        : '$this->modelo->todos(),';
+
+    $bloco = (string) preg_replace(
+        "/^([ \t]*)'registros'(\s*)=>\s*\\\$pagina->registros,\n/m",
+        '${1}\'registros\'${2}=> ' . preg_quote_replace($fonte) . "\n",
+        $bloco,
+        1
+    );
+
+    return (string) preg_replace("/^[ \t]*'pagina'\s*=>\s*\\\$pagina,\n/m", '', $bloco, 1);
+}
+
+/** Coloca a barra de navegacao embaixo da tabela do index. */
+function indexComPaginacao(string $conteudo): string
+{
+    [$inicio, $fim] = marcadoresPaginacaoHtml();
+
+    $conteudo = indexSemPaginacao($conteudo);
+
+    return rtrim($conteudo, "\n") . "\n\n"
+        . $inicio . "\n"
+        . '<?= paginacao($pagina ?? null) ?>' . "\n"
+        . $fim . "\n";
+}
+
+/** Tira a barra de navegacao da view. */
+function indexSemPaginacao(string $conteudo): string
+{
+    [$inicio, $fim] = marcadoresPaginacaoHtml();
+
+    $padrao = '/\n*' . preg_quote($inicio, '/') . '[\s\S]*?' . preg_quote($fim, '/') . '\n*/';
+
+    return rtrim((string) preg_replace($padrao, '', $conteudo, 1), "\n") . "\n";
+}
+
+// =====================================================================
+// db:semear
+// =====================================================================
+
+/**
+ * Executa o arquivo de semeadura, banco/semear.php.
+ *
+ * Semente e dado que voce escreve, nao dado inventado: as categorias do
+ * catalogo, os status de um pedido, a conta de administrador. Por isso ele
+ * mora em um arquivo do projeto, e nao na linha de comando — da para versionar
+ * junto com o codigo e rodar igual em qualquer maquina.
+ *
+ * O atalho com nome de tabela continua existindo para quando voce so quer
+ * encher uma tela depressa, sem abrir o arquivo.
+ */
+function semearBanco(array $argumentos): void
+{
+    [$posicionais, $opcoes] = separarOpcoes($argumentos, ['tudo', 'limpar', 'semente']);
+
+    // Com --semente=N todo mundo da turma recebe exatamente os mesmos dados.
+    if (isset($opcoes['semente'])) {
+        if (!ctype_digit((string) $opcoes['semente'])) {
+            throw new InvalidArgumentException('A semente precisa ser um numero inteiro: --semente=7');
+        }
+
+        mt_srand((int) $opcoes['semente']);
+    }
+
+    $limpar = array_key_exists('limpar', $opcoes);
+    $tudo   = array_key_exists('tudo', $opcoes);
+
+    if ($posicionais === [] && !$tudo) {
+        semearPeloArquivo($limpar);
+
+        return;
+    }
+
+    semearDepressa($posicionais, $tudo, $limpar);
+}
+
+/** O caminho normal: roda banco/semear.php. */
+function semearPeloArquivo(bool $limpar): void
+{
+    $arquivo = CAMINHO_BANCO . '/semear.php';
+
+    if (!is_file($arquivo)) {
+        throw new RuntimeException(
+            'Arquivo de semeadura nao encontrado: ' . caminhoRelativo($arquivo) . "\n\n"
+            . "Crie-o com este conteudo e escreva os seus dados dentro:\n\n"
+            . "  <?php\n"
+            . "  semear('categorias', [\n"
+            . "      ['nome' => 'Eletronicos'],\n"
+            . "  ], 'nome');\n"
+        );
+    }
+
+    if ($limpar) {
+        Nucleo\Semeador::limpar();
+        echo "Banco limpo.\n\n";
+    }
+
+    $contagens = Nucleo\Semeador::executar($arquivo);
+
+    if ($contagens === []) {
+        echo 'Nada foi criado: ' . caminhoRelativo($arquivo) . " nao chamou semear() nem falsos().\n\n";
+        echo "Abra o arquivo, descomente os exemplos e troque pelos seus dados.\n";
+
+        return;
+    }
+
+    echo 'Semeado a partir de ' . caminhoRelativo($arquivo) . ":\n";
+
+    $total = 0;
+
+    foreach ($contagens as $tabela => $quantos) {
+        $total += $quantos;
+
+        printf("  %-22s %d registro(s)\n", $tabela, $quantos);
+    }
+
+    echo "\n{$total} registro(s) inserido(s).\n";
+
+    if (semeouSenha($contagens)) {
+        echo "\nAs contas criadas por falsos() usam a senha: " . Nucleo\DadosFalsos::SENHA . "\n";
+        echo "As criadas por semear() usam a senha que voce escreveu no arquivo.\n";
+    }
+
+    echo "\nPara comecar do zero: php console.php db:semear --limpar\n";
+}
+
+/** O atalho: enche uma tabela (ou todas) sem passar pelo arquivo. */
+function semearDepressa(array $posicionais, bool $tudo, bool $limpar): void
+{
+    $quantidade = quantidadeSemeada($posicionais, $tudo);
+
+    $tabelas = $tudo
+        ? Nucleo\Semeador::tabelasEmOrdem()
+        : [resolverModeloRelatorio($posicionais[0])['tabela']];
+
+    if ($tabelas === []) {
+        throw new RuntimeException(
+            "Nenhuma tabela no banco.\n"
+            . 'Gere um CRUD antes: php console.php scaffold:crud produtos nome:string'
+        );
+    }
+
+    if ($limpar) {
+        Nucleo\Semeador::limpar($tudo ? [] : $tabelas);
+    }
+
+    foreach ($tabelas as $tabela) {
+        Nucleo\Semeador::inventar($tabela, $quantidade);
+    }
+
+    $contagens = Nucleo\Semeador::contagens();
+    $total     = 0;
+
+    foreach ($contagens as $tabela => $quantos) {
+        $total += $quantos;
+
+        printf("  %-22s %d registro(s)\n", $tabela, $quantos);
+    }
+
+    echo "\n{$total} registro(s) inserido(s).\n";
+
+    if (semeouSenha($contagens)) {
+        echo "\nAs contas criadas usam a senha: " . Nucleo\DadosFalsos::SENHA . "\n";
+    }
+
+    echo "\nIsto e um atalho. Os dados que o sistema precisa ter de verdade vao em\n";
+    echo caminhoRelativo(CAMINHO_BANCO . '/semear.php') . ", que roda com: php console.php db:semear\n";
+}
+
+/** Alguma tabela semeada tem coluna de senha? */
+function semeouSenha(array $contagens): bool
+{
+    foreach (array_keys($contagens) as $tabela) {
+        try {
+            foreach (Database::conexao()->query("SHOW COLUMNS FROM `{$tabela}`") as $coluna) {
+                if (Nucleo\DadosFalsos::perfilDoCampo((string) $coluna['Field']) === 'senha') {
+                    return true;
+                }
+            }
+        } catch (Throwable $e) {
+            continue;
+        }
+    }
+
+    return false;
+}
+
+/** Quantidade pedida na linha de comando (padrao: 10). */
+function quantidadeSemeada(array $posicionais, bool $tudo): int
+{
+    $pedida = $tudo ? ($posicionais[0] ?? null) : ($posicionais[1] ?? null);
+
+    if ($pedida === null) {
+        return 10;
+    }
+
+    if (!ctype_digit((string) $pedida) || (int) $pedida < 1) {
+        throw new InvalidArgumentException("Quantidade invalida: \"{$pedida}\". Informe um numero maior que zero.");
+    }
+
+    if ((int) $pedida > 5000) {
+        throw new InvalidArgumentException('Quantidade maxima: 5000 registros por tabela.');
+    }
+
+    return (int) $pedida;
 }

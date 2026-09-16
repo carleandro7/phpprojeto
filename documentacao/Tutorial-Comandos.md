@@ -384,6 +384,48 @@ Gere-a primeiro:
   php console.php scaffold:crud turmas nome:string
 ```
 
+### E quando faltar um campo?
+
+Voce vai perceber, la na frente, que faltou o telefone do aluno. O
+`scaffold:crud` nao ajuda aqui: ele se recusa a sobrescrever arquivos, e apagar
+os sete para gerar de novo levaria junto tudo que voce ja escreveu.
+
+Para isso existe o `scaffold:campo`:
+
+```bash
+php console.php scaffold:campo alunos telefone:string
+```
+
+```text
+Campo acrescentado em /alunos
+  telefone           string
+
+  ~ modelos/Aluno.php
+  ~ controllers/AlunosController.php
+  ~ views/alunos/formulario.php
+  ~ views/alunos/index.php
+  ~ views/alunos/ver.php
+  ~ testes/modelos/AlunoTest.php
+  ~ testes/controllers/AlunosControllerTest.php
+  ~ banco/esquema.sql
+  ~ tabela alunos no banco
+```
+
+Tudo de uma vez: o campo entra em `$preenchiveis`, ganha regra de validacao,
+aparece no formulario, vira coluna da listagem, entra na tela de detalhe, e o
+`CREATE TABLE` e a tabela do banco recebem a coluna nova. Os testes gerados
+continuam passando — o comando ajusta as tabelas deles tambem.
+
+O resultado e igual ao que voce teria se tivesse escrito `telefone:string` na
+linha de comando do `scaffold:crud` desde o comeco.
+
+Errou o nome ou o tipo? O `--remover` desfaz (e avisa antes, porque apagar a
+coluna apaga os dados dela):
+
+```bash
+php console.php scaffold:campo alunos telefone --remover
+```
+
 ### Experimente
 
 Cadastre um aluno com `ativo` desmarcado e veja a listagem: o valor aparece
@@ -395,8 +437,71 @@ quando ela esta desmarcada.
 
 ## Passo 5 — Pesquisa na listagem
 
-A listagem nasce mostrando tudo. Quando a tabela cresce, acrescente um
-formulario de pesquisa escolhendo por quais campos as pessoas vao procurar:
+Pesquisar em uma tabela com tres alunos nao mostra grande coisa. Antes de
+comecar, vamos encher o banco — e ja aproveitar para guardar os dados que o
+sistema precisa ter.
+
+Abra `banco/semear.php` — ele ja veio no projeto, com os exemplos comentados —
+e escreva os dados do seu sistema:
+
+```php
+<?php
+
+$turmas = semear('turmas', [
+    ['nome' => '1o Ano A', 'ano' => 2026],
+    ['nome' => '1o Ano B', 'ano' => 2026],
+    ['nome' => '2o Ano A', 'ano' => 2026],
+], 'nome');
+
+semear('alunos', [
+    ['nome' => 'Ana Souza',  'email' => 'ana@escola.br',  'ativo' => 1, 'turma_id' => $turmas['1o Ano A']],
+    ['nome' => 'Bruno Lima', 'email' => 'bruno@escola.br', 'ativo' => 1, 'turma_id' => $turmas['1o Ano B']],
+]);
+
+falsos('alunos', 40);
+```
+
+```bash
+php console.php db:semear
+```
+
+```text
+Semeado a partir de banco/semear.php:
+  turmas                 3 registro(s)
+  alunos                 42 registro(s)
+
+45 registro(s) inserido(s).
+```
+
+Repare em tres coisas.
+
+A primeira: **o arquivo fica no projeto**, junto com o codigo. Quem clonar o
+repositorio roda um comando e tem exatamente o mesmo banco que voce — nao
+precisa saber quais turmas cadastrar na mao.
+
+A segunda: aquele `'nome'` no fim do `semear('turmas', ...)`. Ele diz "nao
+duplique quem ja existe com esse nome" e devolve os ids indexados pelo nome,
+que e como `$turmas['1o Ano A']` funciona. Rode o comando de novo: as turmas
+continuam tres. Sem esse argumento, cada execucao criaria tudo outra vez — e
+para esse caso existe o `limpar()`, ou:
+
+```bash
+php console.php db:semear --limpar
+```
+
+A terceira: o `falsos('alunos', 40)`. Ele nao substitui os dados que voce
+escreveu; ele da **volume**, para a tela nao ficar vazia. Os valores saem do
+nome e do tipo de cada coluna — em `alunos`, `nome` recebe nome de pessoa,
+`ativo` recebe `0` ou `1`, e `turma_id` sorteia uma turma que existe de
+verdade.
+
+A ordem importa: crie a turma antes do aluno, senao nao ha para onde apontar.
+E se voce errar uma coluna la no fim do arquivo, nada fica gravado pela
+metade — ele roda inteiro dentro de uma transacao.
+
+Agora sim, a listagem nasce mostrando tudo — e com 40 registros na tela fica
+claro por que ela precisa de um formulario de pesquisa. Escolha por quais
+campos as pessoas vao procurar:
 
 ```bash
 php console.php scaffold:pesquisa alunos nome ativo turma_id
@@ -449,6 +554,38 @@ php console.php scaffold:pesquisa alunos --remover   # volta a listagem simples
 
 O que estiver fora dos marcadores continua como voce deixou.
 
+### E quando forem 3.000 alunos?
+
+Com 40 registros a listagem cabe na tela. Com trinta mil, o banco devolve
+tudo, o PHP guarda tudo e a pagina nao abre. Quebre em paginas:
+
+```bash
+php console.php scaffold:paginacao alunos --por-pagina=15
+```
+
+```text
+Paginacao criada em /alunos
+  ~ controllers/AlunosController.php
+  ~ views/alunos/index.php
+
+A listagem passa a mostrar 15 registros por vez, com a barra de
+navegacao abaixo da tabela: /alunos?pagina=2
+
+A pesquisa continua valendo: o total de paginas e contado depois do filtro,
+e trocar de pagina nao perde o que foi digitado.
+```
+
+O corte acontece no banco (`LIMIT`), e nao no PHP: a pagina 2 traz 15 linhas,
+nao 3.000 das quais mostramos 15.
+
+Repare no ultimo aviso. Os dois comandos se encaixam: o `index()` monta o
+`$sql` com o filtro e entrega esse `$sql` ao paginador, entao a barra diz
+"1 a 15 de 11" quando a pesquisa achou 11 — e nao "de 3.000". Tanto faz qual
+dos dois voce rodou primeiro; o arquivo final e o mesmo.
+
+Experimente `/alunos?pagina=99`: em vez de uma tela vazia, aparece a ultima
+pagina. E `/alunos?pagina=abc` volta para a primeira.
+
 ---
 
 ## Passo 6 — A tela de login
@@ -468,6 +605,7 @@ Agora instale o login **sobre esse model**:
 
 ```bash
 php console.php auth:install Professor
+php console.php auth:perfis coordenador,professor Professor
 ```
 
 ```text
@@ -770,6 +908,62 @@ Na entrada, o login chama `Sessao::regenerar()`, que troca o identificador da
 sessao: sem isso, um id capturado antes do login continuaria valendo depois
 ("session fixation").
 
+### Estar logado nao e a mesma coisa que poder
+
+Ate aqui, qualquer professor que entrasse podia tudo — inclusive apagar
+turmas. `exigirAutenticacao()` responde "quem e voce?"; falta responder "voce
+pode?".
+
+```bash
+php console.php auth:perfis coordenador,professor Professor
+```
+
+O comando cria a coluna `perfil` na tabela `professores`, escreve a lista em
+`configuracoes/perfis.php` e — como `Professor` tem CRUD — poe a lista como
+`<select>` no formulario.
+
+Agora da para separar:
+
+```php
+class TurmasController extends Controller
+{
+    public function __construct()
+    {
+        $this->modelo = new Turma();
+        $this->exigirAutenticacao('professor');   // qualquer professor ve
+    }
+
+    public function excluir(string $id): void
+    {
+        $this->exigirPerfil('coordenador', 'professor');   // so o coordenador apaga
+        // ...
+    }
+}
+```
+
+E some o botao de quem nao pode usa-lo:
+
+```php
+<?php if (tem_perfil('coordenador', 'professor')): ?>
+    <button class="btn btn-outline-danger" type="submit">Excluir</button>
+<?php endif ?>
+```
+
+Esconder o botao e cortesia com quem usa, **nao seguranca**: quem souber o
+endereco continua chegando la. Quem protege de verdade e o `exigirPerfil()`
+no controller — a mesma logica do `--auth`, um andar acima.
+
+Nenhuma conta tem perfil ainda. Defina o seu pela tela de professores, ou
+direto no banco:
+
+```sql
+UPDATE professores SET perfil = 'coordenador' WHERE id = 1;
+```
+
+O perfil e lido do banco a cada requisicao, e nao guardado na sessao: tirar o
+`coordenador` de alguem vale na hora, sem esperar a pessoa sair e entrar de
+novo.
+
 ---
 
 ## Passo 8 — Relatorio em PDF
@@ -1003,6 +1197,39 @@ Da resposta voce le `->status`, `->html`, `->contem('texto')`,
 
 ## Passo 11 — Ajustes finais
 
+### Uma foto para cada aluno
+
+```bash
+php console.php scaffold:campo alunos foto:imagem
+```
+
+A coluna guarda o **caminho**; o arquivo em si vai para `views/uploads/alunos/`
+com um nome sorteado. O formulario ganha o `enctype` (sem ele o navegador
+manda so o nome do arquivo e nada chega ao servidor), a listagem ganha a
+miniatura e a tela de detalhe mostra a imagem maior.
+
+Tres coisas vem prontas e sao faceis de esquecer quando se faz na mao:
+
+- na edicao, **campo em branco nao apaga a foto** — quem nao escolher outra
+  mantem a que esta;
+- **foto nova apaga a anterior** do disco, em vez de acumular;
+- **excluir o aluno apaga a foto dele**.
+
+E tres travas de seguranca, porque receber arquivo e a porta de entrada mais
+perigosa de um site:
+
+- o arquivo tem que ter vindo mesmo de um upload;
+- a extensao tem que estar na lista fechada — e, em campo `imagem`, o
+  conteudo ainda passa por `getimagesize()`, entao um `.php` renomeado para
+  `.jpg` e recusado;
+- o nome gravado no disco e sorteado, nunca o que veio junto: um arquivo
+  chamado `../../index.php` sairia da pasta de uploads.
+
+Experimente enviar um `.php` no campo da foto e veja a mensagem aparecer
+embaixo do campo, como qualquer outro erro de validacao.
+
+
+
 O sistema esta pronto; falta a arrumacao.
 
 **1. Menu.** Em `configuracoes/menu.php`, cada `scaffold:crud` deixou uma
@@ -1050,9 +1277,12 @@ Em pouco mais de uma dezena de comandos saiu um sistema com:
   prontas em Bootstrap 5;
 - alunos e aulas ligados a uma turma por chave estrangeira, com `<select>`
   montado sozinho;
-- pesquisa por nome, situacao e turma, compartilhavel pela URL;
+- pesquisa por nome, situacao e turma, compartilhavel pela URL, com a
+  listagem quebrada em paginas;
+- foto do aluno, com as travas que um campo de upload precisa ter;
 - login do professor (e, se quiser, do aluno), com senha em hash e protecao
   contra CSRF e fixacao de sessao;
+- perfis separando quem esta logado de quem pode apagar uma turma;
 - relatorio em PDF filtravel e protegido;
 - 100+ testes automatizados passando.
 
@@ -1062,7 +1292,10 @@ O roteiro inteiro, para repetir do zero:
 php instalar.php
 php console.php scaffold:crud turmas nome:string ano:integer
 php console.php scaffold:crud alunos nome:string email:string nascimento:date ativo:boolean turma_id:belongs_to=turmas
+php console.php scaffold:campo alunos telefone:string foto:imagem
+php console.php db:semear
 php console.php scaffold:pesquisa alunos nome ativo turma_id
+php console.php scaffold:paginacao alunos --por-pagina=15
 php console.php scaffold:crud professores nome:string
 php console.php auth:install Professor
 php console.php scaffold:crud aulas titulo:string data:date turma_id:belongs_to=turmas --auth
@@ -1078,9 +1311,10 @@ Depois protegeu `TurmasController`, `AlunosController` e
 - Personalize os models: novas regras em `validar()`, consultas proprias com
   `onde()` e `primeiroOnde()`, metodos de negocio (`aulasDaTurma()`).
 - Personalize as views geradas: elas sao HTML comum, sem magica.
-- Acrescente colunas rodando o `scaffold:crud` de novo depois de apagar os
-  arquivos do recurso — a definicao da tabela e substituida, e os dados
-  existentes sao preservados.
+- Acrescente colunas com `scaffold:campo` — ele altera o recurso inteiro sem
+  apagar nada do que voce escreveu, e `--remover` desfaz.
+- Escreva em `banco/semear.php` os dados que o sistema precisa ter, e rode
+  `db:semear`. O arquivo vai para o git junto com o codigo.
 - Consulte a [Referencia de comandos](Referencia-Comandos.md) para as opcoes
   que este tutorial nao usou.
 

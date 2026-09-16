@@ -29,7 +29,7 @@ class ValidadorTest extends TesteBase
         $validador->obrigatorio('nome', 'Nome');
 
         $this->assertVerdadeiro($validador->falhou());
-        $this->assertContem('obrigatorio', $validador->erroDe('nome'));
+        $this->assertContem('obrigatório', $validador->erroDe('nome'));
     }
 
     public function testeCampoObrigatorioAusente(): void
@@ -118,7 +118,7 @@ class ValidadorTest extends TesteBase
         $validador->obrigatorio('email')->email('email')->minimo('email', 5);
 
         $this->assertTotal(1, $validador->erros(), 'Cada campo mostra so a primeira falha');
-        $this->assertContem('obrigatorio', $validador->erroDe('email'));
+        $this->assertContem('obrigatório', $validador->erroDe('email'));
     }
 
     public function testeRegrasSaoEncadeaveis(): void

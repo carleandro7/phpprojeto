@@ -56,7 +56,26 @@ class Sql
     }
 
     /**
+     * Valida o nome e devolve entre crases, pronto para entrar no SQL.
+     *
+     * As crases existem por um motivo pratico: o MySQL tem uma lista de
+     * palavras reservadas que cresce a cada versao, e nela cabem nomes que
+     * qualquer sistema usa — "rank", "grupo", "manual", "system", "order".
+     * Sem crase, uma coluna chamada "rank" quebraria o CREATE TABLE, o
+     * INSERT e o WHERE.
+     *
+     * Nao ha risco de injecao aqui: o nome passa antes pelo identificador(),
+     * que so aceita letras, numeros e underline — uma crase nunca chega.
+     */
+    public static function proteger(string $nome, string $tipo = 'identificador'): string
+    {
+        return '`' . self::identificador($nome, $tipo) . '`';
+    }
+
+    /**
      * Valida uma clausula de ordenacao: "nome", "nota DESC", "criado_em ASC".
+     *
+     * Devolve a coluna entre crases, pelo mesmo motivo do proteger().
      */
     public static function ordenacao(string $ordem): string
     {
@@ -68,7 +87,7 @@ class Sql
             );
         }
 
-        $coluna  = $partes[1];
+        $coluna  = self::proteger($partes[1], 'coluna');
         $direcao = isset($partes[3]) ? ' ' . strtoupper($partes[3]) : '';
 
         return $coluna . $direcao;

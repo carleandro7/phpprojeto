@@ -481,6 +481,19 @@ function garantirIndiceUnico(string $tabela, string $coluna): bool
     }
 }
 
+/**
+ * Nome de tabela ou coluna entre crases, para o SQL gerado.
+ *
+ * A lista de palavras reservadas do MySQL cresce a cada versao, e nela cabem
+ * nomes que qualquer sistema usa — "rank", "grupo", "manual", "order". Sem as
+ * crases, um campo com um desses nomes quebraria o CREATE TABLE, o INSERT e
+ * o WHERE.
+ */
+function sqlNome(string $nome): string
+{
+    return Nucleo\Sql::proteger($nome, 'identificador');
+}
+
 function tipoSql(string $tipo): string
 {
     return match ($tipo) {
@@ -500,19 +513,20 @@ function tipoSql(string $tipo): string
 function esquema(string $tabela, array $campos): string
 {
     $colunas = array_map(
-        fn (array $campo): string => "{$campo[0]} " . tipoSql($campo[1]) . ' NULL',
+        fn (array $campo): string => sqlNome($campo[0]) . ' ' . tipoSql($campo[1]) . ' NULL',
         $campos
     );
 
     $chaves = array_map(
-        fn (array $campo): string => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)",
+        fn (array $campo): string => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ("
+            . sqlNome($campo[0]) . ') REFERENCES ' . sqlNome($campo[2]) . '(`id`)',
         array_filter($campos, fn (array $campo): bool => ($campo[2] ?? null) !== null)
     );
 
     $definicoes = implode(",\n    ", array_merge($colunas, $chaves));
 
-    return "CREATE TABLE IF NOT EXISTS {$tabela} (\n"
-        . "    id INT AUTO_INCREMENT PRIMARY KEY,\n"
+    return 'CREATE TABLE IF NOT EXISTS ' . sqlNome($tabela) . " (\n"
+        . "    `id` INT AUTO_INCREMENT PRIMARY KEY,\n"
         . "    {$definicoes}\n"
         . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;';
 }
@@ -1159,7 +1173,7 @@ function controllerGerado(
         {{GUARDA}}        $condicoes  = [];
                 $parametros = [];
 
-        {{FILTROS}}        $sql = 'SELECT * FROM ' . $this->modelo->tabela();
+        {{FILTROS}}        $sql = 'SELECT * FROM ' . $this->modelo->tabelaProtegida();
 
                 if ($condicoes !== []) {
                     $sql .= ' WHERE ' . implode(' AND ', $condicoes);
@@ -1225,11 +1239,13 @@ function filtroRelatorioGerado(string $nome, string $tipo, ?string $relacao): st
 {
     $exato = $nome === 'id' || $relacao !== null || in_array($tipo, ['integer', 'decimal', 'boolean'], true);
 
+    $coluna = sqlNome($nome);
+
     return "        \$filtro = \$this->get('{$nome}');\n"
         . "        if (is_scalar(\$filtro) && (string) \$filtro !== '') {\n"
         . ($exato
-            ? "            \$condicoes[] = '{$nome} = ?';\n            \$parametros[] = \$filtro;\n"
-            : "            \$condicoes[] = '{$nome} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;\n            \$parametros[] = Sql::comoLike((string) \$filtro);\n")
+            ? "            \$condicoes[] = '{$coluna} = ?';\n            \$parametros[] = \$filtro;\n"
+            : "            \$condicoes[] = '{$coluna} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;\n            \$parametros[] = Sql::comoLike((string) \$filtro);\n")
         . "        }\n\n";
 }
 
@@ -1598,11 +1614,12 @@ function tabelasDoTeste(string $tabela, array $campos): string
             continue;
         }
 
-        $linhas[] = "            '{$campo[2]}' => 'CREATE TABLE {$campo[2]} (id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(255) NULL)',";
+        $linhas[] = "            '{$campo[2]}' => 'CREATE TABLE " . sqlNome($campo[2])
+            . " (`id` INT AUTO_INCREMENT PRIMARY KEY, `nome` VARCHAR(255) NULL)',";
     }
 
-    $linhas[] = "            '{$tabela}' => \"CREATE TABLE {$tabela} (\n"
-        . "                id INT AUTO_INCREMENT PRIMARY KEY,\n"
+    $linhas[] = "            '{$tabela}' => \"CREATE TABLE " . sqlNome($tabela) . " (\n"
+        . "                `id` INT AUTO_INCREMENT PRIMARY KEY,\n"
         . '                ' . definicoesDaTabelaDeTeste($tabela, $campos) . "\n"
         . '            )",';
 
@@ -1617,9 +1634,11 @@ function idsDasRelacoes(array $campos): string
     foreach (relacoesUnicas($campos) as $campo) {
         $pai = $campo[2];
 
-        $ids .= "\n        Database::conexao()->exec(\"INSERT INTO {$pai} (nome) VALUES ('Opcao 1'), ('Opcao 2')\");\n"
-            . "        \$this->idsRelacoes['{$campo[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$pai} ORDER BY id ASC LIMIT 1')->fetchColumn();\n"
-            . "        \$this->idsRelacoesAtualizadas['{$campo[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$pai} ORDER BY id DESC LIMIT 1')->fetchColumn();";
+        $tabelaPai = sqlNome($pai);
+
+        $ids .= "\n        Database::conexao()->exec(\"INSERT INTO {$tabelaPai} (`nome`) VALUES ('Opcao 1'), ('Opcao 2')\");\n"
+            . "        \$this->idsRelacoes['{$campo[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaPai} ORDER BY id ASC LIMIT 1')->fetchColumn();\n"
+            . "        \$this->idsRelacoesAtualizadas['{$campo[0]}'] = (int) Database::conexao()->query('SELECT id FROM {$tabelaPai} ORDER BY id DESC LIMIT 1')->fetchColumn();";
     }
 
     return $ids;
@@ -1628,12 +1647,13 @@ function idsDasRelacoes(array $campos): string
 function definicoesDaTabelaDeTeste(string $tabela, array $campos): string
 {
     $colunas = array_map(
-        fn (array $campo): string => "{$campo[0]} " . tipoSql($campo[1]) . ' NULL',
+        fn (array $campo): string => sqlNome($campo[0]) . ' ' . tipoSql($campo[1]) . ' NULL',
         $campos
     );
 
     $chaves = array_map(
-        fn (array $campo): string => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ({$campo[0]}) REFERENCES {$campo[2]}(id)",
+        fn (array $campo): string => "CONSTRAINT fk_{$tabela}_{$campo[0]} FOREIGN KEY ("
+            . sqlNome($campo[0]) . ') REFERENCES ' . sqlNome($campo[2]) . '(`id`)',
         array_filter($campos, fn (array $campo): bool => ($campo[2] ?? null) !== null)
     );
 
@@ -2234,7 +2254,7 @@ function acrescentarColunasAoEsquema(string $tabela, array $colunas): void
             continue;
         }
 
-        $definicao = "{$coluna} " . tipoSql('string') . ' NULL';
+        $definicao = sqlNome($coluna) . ' ' . tipoSql('string') . ' NULL';
 
         // Uma coluna nova nunca pode cair depois de um CONSTRAINT: e assim
         // que se le um CREATE TABLE, e era exatamente isso que quebrava ao
@@ -2263,12 +2283,12 @@ function acrescentarColunasAoEsquema(string $tabela, array $colunas): void
 
 function esquemaAutenticacaoPadrao(): string
 {
-    return "CREATE TABLE IF NOT EXISTS usuarios (\n"
-        . "    id INT AUTO_INCREMENT PRIMARY KEY,\n"
-        . "    nome VARCHAR(100) NOT NULL,\n"
-        . "    email VARCHAR(150) NOT NULL UNIQUE,\n"
-        . "    senha VARCHAR(255) NOT NULL,\n"
-        . "    criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\n"
+    return "CREATE TABLE IF NOT EXISTS `usuarios` (\n"
+        . "    `id` INT AUTO_INCREMENT PRIMARY KEY,\n"
+        . "    `nome` VARCHAR(100) NOT NULL,\n"
+        . "    `email` VARCHAR(150) NOT NULL UNIQUE,\n"
+        . "    `senha` VARCHAR(255) NOT NULL,\n"
+        . "    `criado_em` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\n"
         . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;';
 }
 
@@ -2602,7 +2622,7 @@ function verComCredenciais(string $conteudo): ?string
 function testeComColunasDeCredenciais(string $conteudo, string $tabela): ?string
 {
     $nome   = preg_quote($tabela, '/');
-    $padrao = "/('{$nome}'\s*=>\s*\"CREATE TABLE {$nome} \(\R)(.*?)(\R[ \t]*\)\",)/s";
+    $padrao = "/('{$nome}'\s*=>\s*\"CREATE TABLE `?{$nome}`? \(\R)(.*?)(\R[ \t]*\)\",)/s";
 
     if (!preg_match($padrao, $conteudo)) {
         return null;
@@ -2624,7 +2644,7 @@ function testeComColunasDeCredenciais(string $conteudo, string $tabela): ?string
 
         foreach (['email', 'senha'] as $coluna) {
             if (preg_grep('/^' . $coluna . '\b/i', $definicoes) === []) {
-                $novas[] = "{$coluna} VARCHAR(255) NULL";
+                $novas[] = sqlNome($coluna) . ' VARCHAR(255) NULL';
             }
         }
 
@@ -2893,7 +2913,7 @@ function testeAutenticacaoGerado(
                 $this->limparSessao();
 
                 $this->recriarTabelas([
-                    '{{TABELA}}' => "CREATE TABLE {{TABELA}} (
+                    '{{TABELA}}' => "CREATE TABLE `{{TABELA}}` (
                         id INT AUTO_INCREMENT PRIMARY KEY,
                         {{DEFINICOES}}
                     )",
@@ -3761,9 +3781,11 @@ function filtrosPesquisaGerados(array $campos, string $ordem, string $pasta): st
         $linhas[] = "        if (is_scalar(\$termo) && (string) \$termo !== '') {";
         $linhas[] = "            \$pesquisa['{$nome}'] = (string) \$termo;";
 
+        $coluna = sqlNome($nome);
+
         $linhas[] = match (modoPesquisa($tipo, $relacao)) {
-            'contem', 'comeca' => "            \$condicoes[] = '{$nome} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;",
-            default            => "            \$condicoes[] = '{$nome} = ?';",
+            'contem', 'comeca' => "            \$condicoes[] = '{$coluna} LIKE ? ESCAPE ' . Sql::ESCAPE_LIKE;",
+            default            => "            \$condicoes[] = '{$coluna} = ?';",
         };
 
         $linhas[] = match (modoPesquisa($tipo, $relacao)) {
@@ -3776,7 +3798,7 @@ function filtrosPesquisaGerados(array $campos, string $ordem, string $pasta): st
     }
 
     $linhas[] = '';
-    $linhas[] = "        \$sql = 'SELECT * FROM ' . \$this->modelo->tabela();";
+    $linhas[] = "        \$sql = 'SELECT * FROM ' . \$this->modelo->tabelaProtegida();";
     $linhas[] = '';
     $linhas[] = '        if ($condicoes !== []) {';
     $linhas[] = "            \$sql .= ' WHERE ' . implode(' AND ', \$condicoes);";
@@ -4520,9 +4542,11 @@ function controllerComCampos(string $conteudo, array $campos, string $pasta): ?s
                 continue;
             }
 
+            // Sem str_pad: o scaffold:crud escreve essa linha sem alinhar,
+            // e as duas formas de gerar precisam sair iguais.
             $alterado = (string) preg_replace(
                 "/^([ \t]*)('registro'\s*=>[^\n]*,)$/m",
-                "\${1}\${2}\n\${1}" . str_pad("'{$pai}'", 11) . ' => \\$this->modelo->' . $pai . '(),',
+                "\${1}\${2}\n\${1}'{$pai}' => " . '\\$this->modelo->' . $pai . '(),',
                 $alterado,
                 1
             );
@@ -5232,7 +5256,7 @@ function campoPrincipal(array $colunas): ?string
 function tabelaDoTesteComCampos(string $conteudo, string $tabela, array $campos, bool $remover): ?string
 {
     $nome   = preg_quote($tabela, '/');
-    $padrao = "/('{$nome}'\s*=>\s*\"CREATE TABLE {$nome} \(\R)(.*?)(\R[ \t]*\)\",)/s";
+    $padrao = "/('{$nome}'\s*=>\s*\"CREATE TABLE `?{$nome}`? \(\R)(.*?)(\R[ \t]*\)\",)/s";
 
     if (!preg_match($padrao, $conteudo)) {
         // Um teste que nao recria a tabela nao precisa de ajuste nenhum.
@@ -5263,10 +5287,11 @@ function tabelaDoTesteComCampos(string $conteudo, string $tabela, array $campos,
                 continue;
             }
 
-            $novas[] = "{$coluna} " . tipoSql($tipo) . ' NULL';
+            $novas[] = sqlNome($coluna) . ' ' . tipoSql($tipo) . ' NULL';
 
             if ($relacao !== null) {
-                $restricoes[] = "CONSTRAINT fk_{$tabela}_{$coluna} FOREIGN KEY ({$coluna}) REFERENCES {$relacao}(id)";
+                $restricoes[] = "CONSTRAINT fk_{$tabela}_{$coluna} FOREIGN KEY ("
+                    . sqlNome($coluna) . ') REFERENCES ' . sqlNome($relacao) . '(`id`)';
             }
         }
 
@@ -5292,14 +5317,14 @@ function testeComTabelasPai(string $conteudo, string $tabela, array $campos): st
     foreach (relacoesUnicas($campos) as $campo) {
         $pai = $campo[2];
 
-        if ($pai === $tabela || str_contains($conteudo, "'{$pai}' => 'CREATE TABLE {$pai}")) {
+        if ($pai === $tabela || str_contains($conteudo, "'{$pai}' => 'CREATE TABLE")) {
             continue;
         }
 
         $conteudo = (string) preg_replace_callback(
             "/^([ \t]*)'" . preg_quote($tabela, '/') . "'\s*=>\s*\"CREATE TABLE/m",
-            fn (array $m): string => $m[1] . "'{$pai}' => 'CREATE TABLE {$pai} "
-                . "(id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(255) NULL)',\n" . $m[0],
+            fn (array $m): string => $m[1] . "'{$pai}' => 'CREATE TABLE " . sqlNome($pai)
+                . " (`id` INT AUTO_INCREMENT PRIMARY KEY, `nome` VARCHAR(255) NULL)',\n" . $m[0],
             $conteudo,
             1
         );
@@ -5387,7 +5412,7 @@ function testeSemTabelasPai(string $conteudo, array $campos, array $colunas): st
         );
 
         $conteudo = (string) preg_replace(
-            '/^[ \t]*Database::conexao\(\)->exec\("INSERT INTO ' . preg_quote($relacao, '/') . "[^\n]*\n/m",
+            '/^[ \t]*Database::conexao\(\)->exec\("INSERT INTO `?' . preg_quote($relacao, '/') . "`?[^\n]*\n/m",
             '',
             $conteudo,
             1
@@ -5519,7 +5544,7 @@ function percorrerListasDeDados(string $conteudo, string $principal, callable $a
  */
 function testesQueRecriamATabela(string $tabela, array $jaTratados): array
 {
-    $marca      = "'{$tabela}' => \"CREATE TABLE {$tabela} (";
+    $marca      = "'{$tabela}' => \"CREATE TABLE";
     $encontrados = [];
 
     foreach (['/testes/controllers/*.php', '/testes/modelos/*.php'] as $padrao) {
@@ -5568,7 +5593,7 @@ function testeExtraComCampos(string $conteudo, string $tabela, array $campos, ar
 
             $novo = (string) preg_replace(
                 ["/^[ \t]*'" . preg_quote($pai, '/') . "'\s*=>\s*'CREATE TABLE[^\n]*\n/m",
-                 '/^[ \t]*Database::conexao\(\)->exec\("INSERT INTO ' . preg_quote($pai, '/') . "[^\n]*\n\n?/m"],
+                 '/^[ \t]*Database::conexao\(\)->exec\("INSERT INTO `?' . preg_quote($pai, '/') . "`?[^\n]*\n\n?/m"],
                 '',
                 $novo
             );
@@ -5576,21 +5601,23 @@ function testeExtraComCampos(string $conteudo, string $tabela, array $campos, ar
             continue;
         }
 
-        if ($pai === $tabela || str_contains($novo, "'{$pai}' => 'CREATE TABLE {$pai}")) {
+        if ($pai === $tabela || str_contains($novo, "'{$pai}' => 'CREATE TABLE")) {
             continue;
         }
 
+        $tabelaPai = sqlNome($pai);
+
         $novo = (string) preg_replace_callback(
             "/^([ \t]*)'" . preg_quote($tabela, '/') . "'\s*=>\s*\"CREATE TABLE/m",
-            fn (array $m): string => $m[1] . "'{$pai}' => 'CREATE TABLE {$pai} "
-                . "(id INT AUTO_INCREMENT PRIMARY KEY, nome VARCHAR(255) NULL)',\n" . $m[0],
+            fn (array $m): string => $m[1] . "'{$pai}' => 'CREATE TABLE " . $tabelaPai
+                . " (`id` INT AUTO_INCREMENT PRIMARY KEY, `nome` VARCHAR(255) NULL)',\n" . $m[0],
             $novo,
             1
         );
 
         $novo = (string) preg_replace(
             '/(\$this->recriarTabelas\(\[[\s\S]*?\n[ \t]*\]\);)\n+/',
-            '$1' . "\n\n        Database::conexao()->exec(\"INSERT INTO {$pai} (nome) VALUES ('Opcao 1')\");\n\n",
+            '$1' . "\n\n        Database::conexao()->exec(\"INSERT INTO {$tabelaPai} (`nome`) VALUES ('Opcao 1')\");\n\n",
             $novo,
             1
         );
@@ -5679,10 +5706,11 @@ function esquemaComCampos(string $tabela, array $campos, bool $remover): void
             continue;
         }
 
-        $colunas[] = "{$nome} " . tipoSql($tipo) . ' NULL';
+        $colunas[] = sqlNome($nome) . ' ' . tipoSql($tipo) . ' NULL';
 
         if ($relacao !== null) {
-            $restricoes[] = "CONSTRAINT fk_{$tabela}_{$nome} FOREIGN KEY ({$nome}) REFERENCES {$relacao}(id)";
+            $restricoes[] = "CONSTRAINT fk_{$tabela}_{$nome} FOREIGN KEY ("
+                . sqlNome($nome) . ') REFERENCES ' . sqlNome($relacao) . '(`id`)';
         }
     }
 

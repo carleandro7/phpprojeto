@@ -97,7 +97,7 @@ abstract class Model
     public function todos(?string $ordem = null): array
     {
         $ordem = $ordem ?? $this->ordemPadrao;
-        $sql   = "SELECT * FROM {$this->tabela}";
+        $sql   = 'SELECT * FROM ' . $this->tabelaSql();
 
         if ($ordem !== '') {
             $sql .= ' ORDER BY ' . $this->validarOrdem($ordem);
@@ -111,7 +111,8 @@ abstract class Model
      */
     public function buscar(int|string $id): ?array
     {
-        $sql  = "SELECT * FROM {$this->tabela} WHERE {$this->chavePrimaria} = ? LIMIT 1";
+        $sql  = 'SELECT * FROM ' . $this->tabelaSql()
+            . ' WHERE ' . $this->chaveSql() . ' = ? LIMIT 1';
         $linhas = $this->consultar($sql, [$id]);
 
         return $linhas[0] ?? null;
@@ -127,7 +128,7 @@ abstract class Model
         $operador = $this->validarOperador($operador);
 
         return $this->consultar(
-            "SELECT * FROM {$this->tabela} WHERE {$coluna} {$operador} ? ",
+            'SELECT * FROM ' . $this->tabelaSql() . " WHERE {$coluna} {$operador} ? ",
             [$valor]
         );
     }
@@ -145,7 +146,7 @@ abstract class Model
      */
     public function contar(): int
     {
-        $linhas = $this->consultar("SELECT COUNT(*) AS total FROM {$this->tabela}");
+        $linhas = $this->consultar('SELECT COUNT(*) AS total FROM ' . $this->tabelaSql());
 
         return (int) ($linhas[0]['total'] ?? 0);
     }
@@ -174,7 +175,7 @@ abstract class Model
         ?string $ordem = null
     ): Paginacao {
         $ordem = $ordem ?? $this->ordemPadrao;
-        $sql   = "SELECT * FROM {$this->tabela}";
+        $sql   = 'SELECT * FROM ' . $this->tabelaSql();
 
         if ($ordem !== '') {
             $sql .= ' ORDER BY ' . $this->validarOrdem($ordem);
@@ -255,8 +256,8 @@ abstract class Model
 
         $sql = sprintf(
             'INSERT INTO %s (%s) VALUES (%s)',
-            $this->tabela,
-            implode(', ', $colunas),
+            $this->tabelaSql(),
+            implode(', ', array_map(fn (string $c): string => Sql::proteger($c, 'coluna'), $colunas)),
             implode(', ', $marcadores)
         );
 
@@ -278,14 +279,14 @@ abstract class Model
 
         $atribuicoes = [];
         foreach (array_keys($dados) as $coluna) {
-            $atribuicoes[] = "{$coluna} = ?";
+            $atribuicoes[] = Sql::proteger($coluna, 'coluna') . ' = ?';
         }
 
         $sql = sprintf(
             'UPDATE %s SET %s WHERE %s = ?',
-            $this->tabela,
+            $this->tabelaSql(),
             implode(', ', $atribuicoes),
-            $this->chavePrimaria
+            $this->chaveSql()
         );
 
         $parametros   = array_values($dados);
@@ -299,7 +300,7 @@ abstract class Model
      */
     public function excluir(int|string $id): bool
     {
-        $sql = "DELETE FROM {$this->tabela} WHERE {$this->chavePrimaria} = ?";
+        $sql = 'DELETE FROM ' . $this->tabelaSql() . ' WHERE ' . $this->chaveSql() . ' = ?';
 
         return $this->executar($sql, [$id]) > 0;
     }
@@ -356,7 +357,23 @@ abstract class Model
      */
     protected function validarColuna(string $coluna): string
     {
-        return Sql::identificador($coluna, 'coluna');
+        return Sql::proteger($coluna, 'coluna');
+    }
+
+    /**
+     * O nome da tabela entre crases, pronto para entrar no SQL.
+     *
+     * Sem as crases, uma tabela ou coluna com nome de palavra reservada do
+     * MySQL ("rank", "grupo", "manual") quebraria o comando.
+     */
+    protected function tabelaSql(): string
+    {
+        return Sql::proteger($this->tabela, 'tabela');
+    }
+
+    protected function chaveSql(): string
+    {
+        return Sql::proteger($this->chavePrimaria, 'coluna');
     }
 
     protected function validarOrdem(string $ordem): string
@@ -372,5 +389,16 @@ abstract class Model
     public function tabela(): string
     {
         return $this->tabela;
+    }
+
+    /**
+     * O nome da tabela entre crases, para montar SQL a mao sem tropecar em
+     * palavra reservada do MySQL:
+     *
+     *     $sql = 'SELECT * FROM ' . $this->modelo->tabelaProtegida();
+     */
+    public function tabelaProtegida(): string
+    {
+        return $this->tabelaSql();
     }
 }

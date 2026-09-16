@@ -403,7 +403,10 @@ string (`?nome=teclado&estoque=1`).
   perder o que ja tinha sido digitado;
 - os arquivos enviados passam por uma lista fechada de extensoes, ganham nome
   sorteado e caem em uma pasta onde nenhum `.php` e executado;
-- `exigirPerfil()` separa "esta logado" de "pode fazer isso".
+- `exigirPerfil()` separa "esta logado" de "pode fazer isso";
+- todo nome de tabela e de coluna sai entre crases no SQL, entao nomes
+  reservados pelo MySQL (`rank`, `system`, `groups`, `manual`) podem ser
+  usados sem quebrar nada.
 
 ## Testes
 

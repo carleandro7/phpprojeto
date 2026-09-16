@@ -156,6 +156,9 @@ Regras:
 - campos repetidos sao recusados;
 - o primeiro campo nao pode ser `arquivo` nem `imagem`: e dele que saem o
   titulo da listagem, a regra obrigatoria e as asercoes dos testes;
+- nomes reservados pelo MySQL (`rank`, `system`, `groups`, `manual`, `order`)
+  podem ser usados a vontade, em tabela e em coluna: todo identificador sai
+  entre crases no SQL gerado;
 - o comando nao sobrescreve arquivos existentes — para mexer em um recurso
   pronto, use o [scaffold:campo](#4-acrescentar-ou-tirar-um-campo).
 

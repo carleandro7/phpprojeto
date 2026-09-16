@@ -337,7 +337,7 @@ abstract class TesteBase
             $this->limparDependentes(array_keys($tabelas));
 
             foreach ($tabelas as $nome => $definicao) {
-                $pdo->exec('DROP TABLE IF EXISTS ' . Sql::identificador($nome, 'tabela'));
+                $pdo->exec('DROP TABLE IF EXISTS ' . Sql::proteger($nome, 'tabela'));
                 $pdo->exec($definicao);
             }
         } finally {
@@ -372,7 +372,7 @@ abstract class TesteBase
                 continue;
             }
 
-            $pdo->exec('DELETE FROM ' . Sql::identificador($tabela, 'tabela'));
+            $pdo->exec('DELETE FROM ' . Sql::proteger($tabela, 'tabela'));
         }
     }
 
@@ -382,9 +382,9 @@ abstract class TesteBase
      */
     protected function limparTabela(string $tabela): void
     {
-        // Mesmo em teste o nome da tabela passa pela validacao:
-        // e o mesmo cuidado que o Model tem.
-        $tabela = Sql::identificador($tabela, 'tabela');
+        // Mesmo em teste o nome da tabela passa pela validacao e pelas
+        // crases: e o mesmo cuidado que o Model tem.
+        $tabela = Sql::proteger($tabela, 'tabela');
 
         $pdo = Database::conexao();
         $pdo->exec("DELETE FROM {$tabela}");
@@ -407,7 +407,7 @@ abstract class TesteBase
      */
     protected function contarNaTabela(string $tabela): int
     {
-        $tabela = Sql::identificador($tabela, 'tabela');
+        $tabela = Sql::proteger($tabela, 'tabela');
 
         return (int) Database::conexao()
             ->query("SELECT COUNT(*) FROM {$tabela}")
